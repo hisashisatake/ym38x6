@@ -1,7 +1,9 @@
 [workspace]
 members = [
+    "ym38x6-engine",
     "ym38x6-core",
     "ym38x6-app/src-tauri",
+    "ym38x6-vst",
 ]
 resolver = "2"
 
