@@ -10,3 +10,4 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 cpal = "0.15"
 ym38x6-core = { path = "../../ym38x6-core" }
+configparser = "3"

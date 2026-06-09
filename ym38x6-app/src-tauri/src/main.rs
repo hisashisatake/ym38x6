@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod settings;
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 use ym38x6_core::{AdsrParams, Wms1Engine};
@@ -19,6 +21,10 @@ fn note_off(engine: tauri::State<'_, Arc<Mutex<Wms1Engine>>>, channel: usize) {
 }
 
 fn main() {
+    let settings = settings::Settings::load();
+    // ステップ5でエンジン切り替えを実装。現時点は wms1 固定
+    let _ = &settings.engine_type;
+
     let host = cpal::default_host();
     let device = host
         .default_output_device()
