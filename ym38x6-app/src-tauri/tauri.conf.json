@@ -1,0 +1,26 @@
+{
+  "productName": "ym38x6-app",
+  "version": "0.1.0",
+  "identifier": "com.ym38x6.app",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "38x6 作曲支援",
+        "width": 1200,
+        "height": 800
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}
