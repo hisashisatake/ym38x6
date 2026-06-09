@@ -2,3 +2,4 @@
 ym38x6-app/node_modules/
 ym38x6-app/src-tauri/gen/
 .vscode/
+docs/
