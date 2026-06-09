@@ -4,7 +4,7 @@ mod settings;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
-use ym38x6_core::{AdsrParams, Wms1Engine};
+use wms1_core::{AdsrParams, SoundEngine, Wms1Engine};
 
 #[tauri::command]
 fn note_on(
