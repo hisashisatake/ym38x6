@@ -14,14 +14,15 @@ Inspired by Ryu Umemoto's YM-2609, which explored a similar "what if" premise us
 
 ```
 ym38x6/
-  ym38x6-core/        # Sound engine — pure Rust, no framework dependencies
+  ym38x6-engine/      # Core primitives — WaveTable, AdsrParams, SoundEngine trait
+  wms1-core/          # WMS-1 engine implementation (depends on ym38x6-engine)
+  wms1-vst/           # WMS-1 VST3/CLAP plugin (nih-plug)
   ym38x6-app/         # Composition app (Tauri v2, Windows desktop)
     src/              # Frontend: calibration + gesture UI (HTML/JS)
     src-tauri/        # Backend: cpal WASAPI output, Tauri commands
-  ym38x6-vst/         # VST3/CLAP plugin — phase 6+
 ```
 
-`ym38x6-core` has zero dependencies on nih-plug, Tauri, or cpal. The audio engine is fully isolated.
+`ym38x6-engine` and `wms1-core` have zero dependencies on nih-plug, Tauri, or cpal. The audio engine is fully isolated.
 
 ## Sound Engine
 
@@ -46,6 +47,7 @@ A waveform memory sound source — equivalent to one operator of the 38x6 FM eng
 - Per-channel dual frequency (OPQ-derived: Op0/2 and Op1/3 pairs independent)
 - Per-operator key-on (Op3 as master)
 - All parameters 0–255 (8-bit unified), F-Number is the only 16-bit exception
+- **State Variable Filter** per voice: Cutoff (0–255, log scale), Resonance (0–255), Type (LP/HP/BP)
 
 ## Composition App
 
@@ -88,7 +90,8 @@ Uses OPQ-derived per-operator key-on: avoid notes play at reduced volume rather 
 cargo check --workspace --message-format=short
 
 # Run tests
-cargo test -p ym38x6-core
+cargo test -p ym38x6-engine
+cargo test -p wms1-core
 
 # Run app (first run compiles all dependencies, ~5 min)
 cd ym38x6-app
