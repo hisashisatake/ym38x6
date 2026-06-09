@@ -22,6 +22,9 @@ let isUpdating     = false;
 let pendingPos     = null;   // {x,y} — mousemove から animation tick へ橋渡し
 let mouseHeld      = false;
 let mousePos       = { x: 0, y: 0 };
+let currentWaveSlot = 0;
+
+const WAVE_NAMES = ['sine', 'square', 'saw', 'tri'];
 
 // ─────────────────────────────────────────────
 // Canvas
@@ -138,7 +141,7 @@ async function updateChord(px, py) {
     if (!mouseHeld) return;
     for (const interval of chord.intervals) {
       const ch = await invoke('note_on', {
-        waveSlot: 0,
+        waveSlot: currentWaveSlot,
         frequency: midiFreq(root.midi + interval),
       });
       if (!mouseHeld) {
@@ -193,6 +196,11 @@ window.addEventListener('keydown', async (e) => {
     cs = null; state = S.CAL_C; lastChordKey = null;
     chordEl.textContent = '—'; hintEl.textContent = '';
   }
+  const slot = parseInt(e.key) - 1;
+  if (slot >= 0 && slot <= 3) {
+    currentWaveSlot = slot;
+    lastChordKey = null; // 同じコードでも即座に音色変更させる
+  }
 });
 
 // ─────────────────────────────────────────────
@@ -231,6 +239,7 @@ function draw() {
   } else {
     drawCalibLayer(W, H);
   }
+  drawWaveIndicator(W, H);
 }
 
 function drawCalibLayer(W, H) {
@@ -351,6 +360,17 @@ function drawChordScale(W, H) {
   ctx.fillText('← 暗い', startX - 60, y);
   ctx.textAlign = 'right';
   ctx.fillText('明るい →', startX + step * (total - 1) + 60, y);
+
+}
+
+function drawWaveIndicator(W, H) {
+  ctx.textAlign = 'right';
+  ctx.font = '13px monospace';
+  for (let i = 0; i < WAVE_NAMES.length; i++) {
+    const isActive = i === currentWaveSlot;
+    ctx.fillStyle = isActive ? '#fa4' : '#444';
+    ctx.fillText(`${i + 1}:${WAVE_NAMES[i]}`, W - 16, H - 16 - (WAVE_NAMES.length - 1 - i) * 20);
+  }
 }
 
 // ─────────────────────────────────────────────
