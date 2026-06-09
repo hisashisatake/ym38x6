@@ -267,10 +267,22 @@ FM合成出力にかけるアナログシンセ的なVCF相当。OPQ由来パラ
 | 項目 | 値 | 備考 |
 |------|-----|------|
 | 波形 | 三角波 | OPQ由来・固定 |
-| 周波数 | 3bit → 8bit | 0〜255 |
-| AM感度 | チャンネルごと 2bit → 8bit | |
-| PM感度 | チャンネルごと 3bit → 8bit | |
+| 周波数 | 3bit → 8bit（0〜255） | |
+| PMD（ピッチ変調深さ） | 0〜255 | CC77ベース値 + CC1加算値で実効値を決定 |
+| AMD（振幅変調深さ） | 0〜255 | |
+| PM感度（PMS） | チャンネルごと 3bit → 8bit | |
+| AM感度（AMS） | チャンネルごと 2bit → 8bit | |
+| Delay | 0〜255 | キーオンからLFO効果開始までの遅延時間。38x6独自拡張 |
 | AMオン/オフ | オペレーターごと | |
+
+**PMDの加算モデル（CC1 + CC77）：**
+```
+実効PMD = clamp(CC77値 + CC1値, 0, 255)
+
+CC77（Vibrato Depth）: プリセットに保存されるベース値
+CC1 （Modulation Wheel）: 演奏中にホイールで加算する分
+→ プリセットで無振動（CC77=0）にしておき、ホイールで深さを加減する使い方が標準的
+```
 
 ---
 
@@ -291,6 +303,86 @@ SY77/TG77（AFM音源, 1989年）の設計を参考に：
 | ノイズ | 需要なし |
 | DT2 | 需要なし |
 | 効果音モード | 需要なし |
+
+---
+
+## MIDI実装方針
+
+### DAWオートメーション（nih-plugパラメーター）
+
+以下の全パラメーターをnih-plugのParam として公開し、Cubase・Logic等でのDAWオートメーションに対応する。
+
+**チャンネル単位（6個）：**
+Feedback / LFO Freq / LFO PMD（ベース値）/ LFO AMD / LFO Delay / Filter Cutoff / Filter Resonance
+
+**オペレーター単位（10個 × 4op = 40個）：**
+TL / AR / D1R / D2R / D1L / RR / MUL / DT1 / KS / AME
+
+**離散パラメーター（NRPN・GUI操作のみ、DAWオートメーション対象外）：**
+Algorithm / Waveform（WF）per op / Filter Type（LP/HP/BP）
+
+### MIDI CC（GM2準拠）
+
+| CC | GM2定義 | 38x6割り当て | GM2との関係 |
+|---|---|---|---|
+| CC 1 | Modulation Wheel | LFO PMD 加算分（CC77への加算） | 準拠（加算モデル） |
+| CC 7 | Channel Volume | Volume | 完全準拠 |
+| CC 10 | Pan | Pan | 完全準拠 |
+| CC 11 | Expression | Expression | 完全準拠 |
+| CC 64 | Damper Pedal | Sustain | 完全準拠 |
+| CC 71 | Resonance | Filter Resonance | 完全準拠 |
+| CC 72 | Release Time | RR（キャリア一括） | 準拠 |
+| CC 73 | Attack Time | AR（キャリア一括） | 準拠 |
+| CC 74 | Brightness | Filter Cutoff | 完全準拠 |
+| CC 75 | Decay Time | D1R（キャリア一括） | 準拠 |
+| CC 76 | Vibrato Rate | LFO Frequency | 準拠 |
+| CC 77 | Vibrato Depth | LFO PMD ベース値 | 準拠（加算モデル） |
+| CC 78 | Vibrato Delay | LFO Delay | 準拠 |
+| CC 120 | All Sound Off | All Sound Off | 完全準拠 |
+| CC 121 | Reset All Controllers | Reset All Controllers | 完全準拠 |
+| CC 123 | All Notes Off | All Notes Off | 完全準拠 |
+| CC 126 | Mono Mode On | Mono Mode | 完全準拠 |
+| CC 127 | Poly Mode On | Poly Mode | 完全準拠 |
+
+**CC1 + CC77 加算モデル：**
+```
+実効PMD = clamp(CC77値 + CC1値, 0, 255)
+```
+
+**意図的に実装しないGM2 CC：**
+- CC 91/93（Reverb/Chorus Send）：エフェクト非搭載
+
+### Bank Select / Program Change
+
+CC 0（MSB）+ CC 32（LSB）によるBank SelectとProgram Changeを実装する。
+GM2のプログラム番号定義（0〜127の楽器カテゴリ）に準拠したバンク構成を採用する。
+
+**バンク構成：**
+
+| バンク | 内容 |
+|---|---|
+| Bank 0 | GM2プログラムマップ準拠（0〜127）。PSR-70パッチをGM2カテゴリに対応させて収録 |
+| Bank 1〜3 | PSR-70の450音色をそのまま収録（128音色 × 3バンク + 残り） |
+| Bank 4以降 | ユーザー定義プリセット |
+
+**音色作成方針（Phase 4で実施）：**
+- PSR-70の450音色（OPQパッチ）をコンバーターで38x6形式に変換し、GM2カテゴリに割り当て
+- FMが苦手なカテゴリ（アコースティックピアノ・弦楽器・合唱等）は最近似音色で代替
+- 実際のGM2→音色マッピング表はPhase 4で別途作成
+
+**前提条件：**
+PSR-70音色データ（`def_seqs.h`）の利用はJari Kangasへの許諾確認が必要。
+→ 参照：実装参照元セクション
+
+### NRPN
+
+DAWオートメーション非対応の離散パラメーターおよびハードコントローラー向けの詳細制御に使用。
+
+| 対象 | 備考 |
+|---|---|
+| Algorithm（CON） | 8種類、信号ルーティングが変わるため離散制御 |
+| Waveform（WF）per op | 0〜7（ビルトイン）+ 8〜255（ユーザー定義） |
+| Filter Type | 0=LP / 1=HP / 2=BP |
 
 ---
 
