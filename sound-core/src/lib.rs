@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 
 pub mod lfo;
-pub use lfo::{LfoWaveform, PerformanceLfo};
+pub use lfo::{LfoWaveform, PerformanceLfo, LfoDestination, PerformanceLfoTarget, apply_lfo_modulation,
+    pitch_depth_cents, volume_depth};
 
 // ---------------------------------------------------------------------------
 // Wave table format (ymfm-compatible log encoding)

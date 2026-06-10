@@ -122,6 +122,65 @@ impl Default for PerformanceLfo {
 }
 
 // ---------------------------------------------------------------------------
+// パフォーマンスLFOの適用先（Destination）
+// ---------------------------------------------------------------------------
+
+/// パフォーマンスLFOの共通Destination。
+/// 拡張Destination（38x6のTLキャリア一括など）は各エンジン側で個別に扱う。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum LfoDestination {
+    /// ビブラート。実効Depthはセント単位。
+    #[default]
+    Pitch,
+    /// トレモロ。実効Depthは実効音量への加算量（-1.0〜1.0）。
+    Volume,
+}
+
+/// パフォーマンスLFOの適用先。WMS-1・38x6の各ボイスが実装する。
+pub trait PerformanceLfoTarget {
+    /// Destination=Pitch（ビブラート）。`cents`はピッチオフセット（セント単位）。
+    fn apply_pitch_modulation(&mut self, cents: f32);
+
+    /// Destination=Volume（トレモロ）。`delta`は実効音量への加算量。
+    fn apply_volume_modulation(&mut self, delta: f32);
+}
+
+/// LFO出力値（-1.0〜1.0）と実効DepthからDestinationに応じた変調をtargetへ適用する。
+pub fn apply_lfo_modulation(
+    lfo_value: f32,
+    destination: LfoDestination,
+    depth: f32,
+    target: &mut impl PerformanceLfoTarget,
+) {
+    match destination {
+        LfoDestination::Pitch => target.apply_pitch_modulation(lfo_value * depth),
+        LfoDestination::Volume => target.apply_volume_modulation(lfo_value * depth),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 実効Depthの計算（CC1/CC77/RPN0,5）
+// ---------------------------------------------------------------------------
+
+/// Destination=Pitchの実効Depth（セント）。
+/// `実効Depth(セント) = CC77値 + CC1値 × RPN0,5値 / 127`
+///
+/// CC77（パフォーマンスLFO Depthベース値）/ CC1（加算分）は本プロジェクトの
+/// 内部表現（0〜255）。RPN0,5（Modulation Depth Range）はGM2準拠の0〜127スケール。
+pub fn pitch_depth_cents(cc77: u8, cc1: u8, rpn0_5: u8) -> f32 {
+    cc77 as f32 + cc1 as f32 * rpn0_5 as f32 / 127.0
+}
+
+/// Destination=Volumeの実効Depth（0.0〜1.0に正規化）。
+/// `実効Depth = clamp(CC77値 + CC1値, 0, 255)` を、`PerformanceLfoTarget`が
+/// 期待する0.0〜1.0の比率に正規化したもの。
+///
+/// CC77/CC1は本プロジェクトの内部表現（0〜255）。
+pub fn volume_depth(cc77: u8, cc1: u8) -> f32 {
+    (cc77 as u16 + cc1 as u16).min(255) as f32 / 255.0
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -140,5 +199,58 @@ mod tests {
     fn delay_to_seconds_bounds() {
         assert_eq!(delay_to_seconds(0), 0.0);
         assert!((delay_to_seconds(255) - 10.0).abs() < 1e-6);
+    }
+
+    #[derive(Default)]
+    struct MockTarget {
+        pitch_cents: f32,
+        volume_delta: f32,
+    }
+
+    impl PerformanceLfoTarget for MockTarget {
+        fn apply_pitch_modulation(&mut self, cents: f32) {
+            self.pitch_cents = cents;
+        }
+
+        fn apply_volume_modulation(&mut self, delta: f32) {
+            self.volume_delta = delta;
+        }
+    }
+
+    #[test]
+    fn apply_lfo_modulation_dispatches_to_pitch() {
+        let mut target = MockTarget::default();
+        apply_lfo_modulation(0.5, LfoDestination::Pitch, 100.0, &mut target);
+        assert_eq!(target.pitch_cents, 50.0);
+        assert_eq!(target.volume_delta, 0.0);
+    }
+
+    #[test]
+    fn apply_lfo_modulation_dispatches_to_volume() {
+        let mut target = MockTarget::default();
+        apply_lfo_modulation(-0.5, LfoDestination::Volume, 0.4, &mut target);
+        assert_eq!(target.volume_delta, -0.2);
+        assert_eq!(target.pitch_cents, 0.0);
+    }
+
+    #[test]
+    fn pitch_depth_cents_formula() {
+        // CC1=0なら、CC77値（ベース値）のみがそのままセント値になる
+        assert_eq!(pitch_depth_cents(100, 0, 64), 100.0);
+        // CC77=0、RPN0,5=127（最大）なら、CC1値がそのままセント値になる
+        assert!((pitch_depth_cents(0, 127, 127) - 127.0).abs() < 1e-5);
+        // RPN0,5=64（デフォルト、約50セント相当）はCC1の影響を約半分に縮小する
+        assert!((pitch_depth_cents(0, 127, 64) - 64.0).abs() < 1e-2);
+        // 両方最大なら加算される
+        assert!((pitch_depth_cents(255, 255, 127) - 510.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn volume_depth_clamps_and_normalizes() {
+        assert_eq!(volume_depth(0, 0), 0.0);
+        assert!((volume_depth(100, 50) - 150.0 / 255.0).abs() < 1e-6);
+        // 合計が255を超える場合は255でclampされ、1.0に正規化される
+        assert_eq!(volume_depth(255, 255), 1.0);
+        assert_eq!(volume_depth(200, 200), 1.0);
     }
 }

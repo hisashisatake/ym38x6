@@ -1,8 +1,10 @@
 use std::collections::HashMap;
-use sound_core::{WaveTable, gen_sine, gen_square, gen_sawtooth, gen_triangle};
+use sound_core::{WaveTable, gen_sine, gen_square, gen_sawtooth, gen_triangle,
+    PerformanceLfo, PerformanceLfoTarget, apply_lfo_modulation};
 
 // 呼び出し側が sound-core に直接依存しなくて済むよう re-export
-pub use sound_core::{AdsrParams, SoundEngine, convert_wave_32};
+pub use sound_core::{AdsrParams, SoundEngine, convert_wave_32, LfoDestination, LfoWaveform,
+    pitch_depth_cents, volume_depth};
 
 // ---------------------------------------------------------------------------
 // ADSR ヘルパー
@@ -30,12 +32,31 @@ struct Channel {
     env_level: f32,
     osc_phase: f32,
     frequency: f32,
+    perf_lfo: PerformanceLfo,
+    lfo_destination: LfoDestination,
+    lfo_depth: f32,
+    pitch_mod_cents: f32,
+    volume_mod_delta: f32,
 }
 
 impl Channel {
     fn new(wave_slot: u8, frequency: f32, adsr: AdsrParams) -> Self {
         Self { wave_slot, adsr, env_phase: EnvPhase::Attack,
-               env_level: 0.0, osc_phase: 0.0, frequency }
+               env_level: 0.0, osc_phase: 0.0, frequency,
+               perf_lfo: PerformanceLfo::new(),
+               lfo_destination: LfoDestination::default(),
+               lfo_depth: 0.0,
+               pitch_mod_cents: 0.0,
+               volume_mod_delta: 0.0 }
+    }
+
+    /// パフォーマンスLFOのRate/Delay/Waveform/Destination/Depthを設定する
+    fn set_performance_lfo(&mut self, rate: u8, delay: u8, waveform: LfoWaveform, destination: LfoDestination, depth: f32) {
+        self.perf_lfo.set_rate(rate);
+        self.perf_lfo.set_delay(delay);
+        self.perf_lfo.set_waveform(waveform);
+        self.lfo_destination = destination;
+        self.lfo_depth = depth;
     }
 
     fn note_off(&mut self) {
@@ -73,9 +94,25 @@ impl Channel {
             }
             EnvPhase::Idle => return 0.0,
         }
-        self.osc_phase = (self.osc_phase + self.frequency / sample_rate).fract();
+
+        let lfo_value = self.perf_lfo.tick(sample_rate);
+        apply_lfo_modulation(lfo_value, self.lfo_destination, self.lfo_depth, self);
+
+        let effective_freq = self.frequency * 2f32.powf(self.pitch_mod_cents / 1200.0);
+        self.osc_phase = (self.osc_phase + effective_freq / sample_rate).fract();
         let idx = (self.osc_phase * wave.len() as f32) as usize;
-        wave.sample_at(idx) * self.env_level
+        let effective_level = (self.env_level + self.volume_mod_delta).clamp(0.0, 1.0);
+        wave.sample_at(idx) * effective_level
+    }
+}
+
+impl PerformanceLfoTarget for Channel {
+    fn apply_pitch_modulation(&mut self, cents: f32) {
+        self.pitch_mod_cents = cents;
+    }
+
+    fn apply_volume_modulation(&mut self, delta: f32) {
+        self.volume_mod_delta = delta;
     }
 }
 
@@ -106,6 +143,13 @@ impl Wms1Engine {
     pub fn set_user_wave(&mut self, slot: u8, input: &[i8; 32]) {
         assert!(slot >= 8, "slots 0–7 are reserved for builtin waves");
         self.wave_tables[slot as usize] = Some(convert_wave_32(input));
+    }
+
+    /// 指定チャンネルのパフォーマンスLFO（Rate/Delay/Waveform/Destination/Depth）を設定する
+    pub fn set_performance_lfo(&mut self, channel: usize, rate: u8, delay: u8, waveform: LfoWaveform, destination: LfoDestination, depth: f32) {
+        if let Some(ch) = self.channels.get_mut(&channel) {
+            ch.set_performance_lfo(rate, delay, waveform, destination, depth);
+        }
     }
 }
 
