@@ -17,7 +17,7 @@ ym38x6/
   sound-core/         # Core primitives — WaveTable, AdsrParams, SoundEngine trait
   wms1-core/          # WMS-1 engine implementation (depends on sound-core)
   wms1-vst/           # WMS-1 VST3/CLAP plugin (nih-plug)
-  ym38x6-app/         # Composition app (Tauri v2, Windows desktop)
+  gesture-app/        # Composition app (Tauri v2, Windows desktop)
     src/              # Frontend: calibration + gesture UI (HTML/JS)
     src-tauri/        # Backend: cpal WASAPI output, Tauri commands
 ```
@@ -43,10 +43,9 @@ A waveform memory sound source — equivalent to one operator of the 38x6 FM eng
 4-operator FM synthesis, OPQ-derived with OPZ waveform extensions.
 
 - 4op / channel, 8 algorithms
-- 12-bit F-Number (more precise than OPN's 11-bit)
-- Per-channel dual frequency (OPQ-derived: Op0/2 and Op1/3 pairs independent)
+- Per-operator frequency: Op0–3 each always have an independent octave (3-bit) + F-Number (13-bit, more precise than OPQ's 12-bit) — generalizes OPQ's "2 frequencies per channel" (Op0/2, Op1/3 pairs)
 - Per-operator key-on (Op3 as master)
-- All parameters 0–255 (8-bit unified), F-Number is the only 16-bit exception
+- All parameters 0–255 (8-bit unified); octave + F-Number (16-bit total) is the only exception
 - **State Variable Filter** per voice: Cutoff (0–255, log scale), Resonance (0–255), Type (LP/HP/BP)
 
 ## Composition App
@@ -69,7 +68,11 @@ The gesture system requires no recognition algorithm — everything is continuou
 
 ### Avoid Note Handling (Phase 3+)
 
-Uses OPQ-derived per-operator key-on: avoid notes play at reduced volume rather than being silenced, giving musical feedback instead of a hard block.
+Selectable handling for notes outside the current scale:
+- **Snap** — auto-correct to the nearest scale tone
+- **Random shift** — move to an adjacent scale tone, up or down
+- **Silence** — don't play
+- **Warning playback** — play at reduced volume via OPQ-derived per-operator key-on (Op3 stays on as master, Op0–2 play quieter), giving musical feedback instead of a hard block
 
 ## Development Roadmap
 
@@ -77,11 +80,12 @@ Uses OPQ-derived per-operator key-on: avoid notes play at reduced volume rather 
 |-------|-------|
 | 1 | WMS-1 + Tauri desktop app + gesture UI (current) |
 | 2 | 38x6 FM engine, waveform selection, detune |
-| 3 | Dual frequency, per-operator key-on |
-| 4 | Parameter UI, preset save/load, PSR-70 converter |
+| 3 | Per-operator F-Number, per-operator key-on |
+| 4 | Parameter UI, preset save/load, PSR-70 converter, GM2 Bank 0 program set, master effects (Reverb/Chorus) |
 | 5 | Tablet support (Tauri v2 iOS/Android) |
-| 6 | VST3/CLAP plugin via nih-plug |
-| 7 | Algorithm routing extension (SY77-style) |
+| 6 | VST3/CLAP plugin via nih-plug (optional) |
+| 7 | Algorithm routing extension (SY77-style, optional) |
+| 8 | ML-based tone generation (`ym38x6-ml`, optional) |
 
 ## Building
 
@@ -94,7 +98,7 @@ cargo test -p sound-core
 cargo test -p wms1-core
 
 # Run app (first run compiles all dependencies, ~5 min)
-cd ym38x6-app
+cd gesture-app
 npm install
 npm run tauri dev
 ```

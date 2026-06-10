@@ -46,7 +46,7 @@ ym38x6/
   sound-core/          ← WaveTable・AdsrParams・SoundEngineトレイト（基盤ライブラリ）
   wms1-core/           ← WMS-1エンジン実装（sound-coreに依存）
   wms1-vst/            ← WMS-1 VST3/CLAPプラグイン（nih-plug）
-  ym38x6-app/          ← 作曲支援Tauriアプリ
+  gesture-app/         ← 作曲支援Tauriアプリ
     src-tauri/         ← Rustバックエンド（cpalで音声出力）
     src/               ← フロントエンド
 ```
@@ -75,14 +75,14 @@ cargo test -p wms1-core
 ### アプリ起動（フェーズ1以降、Tauri設定後）
 
 ```powershell
-cd ym38x6-app
+cd gesture-app
 npm run tauri dev
 ```
 
 ### ビルド
 
 ```powershell
-cd ym38x6-app
+cd gesture-app
 npm run tauri build
 ```
 
@@ -110,7 +110,7 @@ wms1-core（WMS-1実装）
 コアは「この周波数でキーオン」「このパラメーターで発音」のAPIのみを提供する。
 MIDI・ジェスチャー解釈・UIはコアの外側で行う。
 
-### 音声出力（ym38x6-app/src-tauri）
+### 音声出力（gesture-app/src-tauri）
 
 cpalでWASAPIに直接出力。オーディオスレッドのコールバックでym38x6-coreを呼ぶ。
 

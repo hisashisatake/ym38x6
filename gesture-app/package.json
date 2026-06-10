@@ -1,5 +1,5 @@
 {
-  "name": "ym38x6-app",
+  "name": "gesture-app",
   "version": "0.1.0",
   "scripts": {
     "tauri": "tauri"

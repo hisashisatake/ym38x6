@@ -1,5 +1,5 @@
 [package]
-name = "ym38x6-app"
+name = "gesture-app"
 version = "0.1.0"
 edition = "2021"
 
