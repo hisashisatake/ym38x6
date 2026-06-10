@@ -97,14 +97,18 @@ sound-core（基盤）
   WaveTable（1024×u16 log符号化）
   AdsrParams
   SoundEngineトレイト
+  PerformanceLfo / PerformanceLfoTarget（共通Destination: 0=Pitch, 1=Volume）
+  MasterEffects（Reverb/Chorus、SoundEngine::render()出力に後段適用）
 
 wms1-core（WMS-1実装）
   Wms1Engine：波形オシレーター + ADSRエンベロープ + チャンネル管理（無制限）
   波形変換：32サンプルi8入力 → 1024サンプル対数フォーマット
+  PerformanceLfoTarget実装（Pitch→周波数、Volume→ADSR出力レベル）
 
 38x6エンジン（フェーズ2以降）
   4opFM合成
   WMS-1と同一の波形フォーマット（移行コストなし）
+  PerformanceLfoTarget実装（共通Destination + 拡張Destination=2: TLキャリア一括）
 ```
 
 コアは「この周波数でキーオン」「このパラメーターで発音」のAPIのみを提供する。
