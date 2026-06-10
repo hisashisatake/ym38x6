@@ -136,4 +136,4 @@ stream = device.build_output_stream(&config, move |output: &mut [f32], _| {
 - `ym38x6-engine` と `wms1-core` は常にnih-plug・Tauri・cpalに無依存を保つ
 - 波形フォーマットはWMS-1/38x6で共通（1024×uint16_t対数）。変換パイプラインはコアに実装
 - フェーズ1の目的はジェスチャーUIとコード判定ロジックの検証。音色品質は後回しでよい
-- パラメーターは全て0〜255（8bit）統一。F-Numberのみ16bit例外
+- パラメーターは全て0〜255（8bit）統一。周波数（オクターブ3bit + F-Number 13bit = 16bit、常にOP単位×4）のみ例外
