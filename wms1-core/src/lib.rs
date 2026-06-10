@@ -150,6 +150,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rate_to_delta_bounds() {
+        let sr = 44100.0;
+
+        // rate=255（最速）→ 時定数 ~1ms（T_MIN） → delta = 1/(0.001*sr) = 1000/sr
+        let fast = rate_to_delta(255, sr);
+        assert!((fast - 1000.0 / sr).abs() < 1e-6, "rate=255 delta mismatch: {fast}");
+
+        // rate=0（最遅）→ 時定数 ~10s（T_MAX） → delta = 1/(10*sr) = 0.1/sr
+        let slow = rate_to_delta(0, sr);
+        assert!((slow - 0.1 / sr).abs() < 1e-6, "rate=0 delta mismatch: {slow}");
+
+        // rateが大きいほどdeltaも大きい（変化が速い）
+        assert!(fast > slow);
+    }
+
+    #[test]
     fn engine_note_on_off_renders() {
         let mut engine = Wms1Engine::new(44100.0);
         let adsr = AdsrParams::default();
