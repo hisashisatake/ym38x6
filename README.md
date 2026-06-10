@@ -14,15 +14,15 @@ Inspired by Ryu Umemoto's YM-2609, which explored a similar "what if" premise us
 
 ```
 ym38x6/
-  ym38x6-engine/      # Core primitives — WaveTable, AdsrParams, SoundEngine trait
-  wms1-core/          # WMS-1 engine implementation (depends on ym38x6-engine)
+  sound-core/         # Core primitives — WaveTable, AdsrParams, SoundEngine trait
+  wms1-core/          # WMS-1 engine implementation (depends on sound-core)
   wms1-vst/           # WMS-1 VST3/CLAP plugin (nih-plug)
   ym38x6-app/         # Composition app (Tauri v2, Windows desktop)
     src/              # Frontend: calibration + gesture UI (HTML/JS)
     src-tauri/        # Backend: cpal WASAPI output, Tauri commands
 ```
 
-`ym38x6-engine` and `wms1-core` have zero dependencies on nih-plug, Tauri, or cpal. The audio engine is fully isolated.
+`sound-core` and `wms1-core` have zero dependencies on nih-plug, Tauri, or cpal. The audio engine is fully isolated.
 
 ## Sound Engine
 
@@ -90,7 +90,7 @@ Uses OPQ-derived per-operator key-on: avoid notes play at reduced volume rather 
 cargo check --workspace --message-format=short
 
 # Run tests
-cargo test -p ym38x6-engine
+cargo test -p sound-core
 cargo test -p wms1-core
 
 # Run app (first run compiles all dependencies, ~5 min)

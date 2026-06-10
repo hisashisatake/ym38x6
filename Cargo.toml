@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "ym38x6-engine",
+    "sound-core",
     "wms1-core",
     "wms1-vst",
     "ym38x6-app/src-tauri",

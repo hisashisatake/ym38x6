@@ -331,7 +331,7 @@ GM2準拠のセンドエフェクト2系統。各ボイス（FM合成 → SVFフ
 **実装方式：**
 - Reverb：コムフィルタ＋オールパスフィルタ構成のアルゴリズミックリバーブ（Room1〜Plate）。Delay/Panning Delayタイプはフィードバックディレイラインで実現
 - Chorus：LFO変調ディレイライン（Chorus1〜4、Flanger、Feedback Chorus）。Short Delay系タイプは変調なしの短ディレイ
-- `ym38x6-engine`に依存ゼロのDSPモジュールとして実装し、各`SoundEngine::render()`の出力に対してapp/plugin側のレンダリング後段で適用する
+- `sound-core`に依存ゼロのDSPモジュールとして実装し、各`SoundEngine::render()`の出力に対してapp/plugin側のレンダリング後段で適用する
 
 **OPQコンバーターとの関係：**
 エフェクトはOPQ由来パラメーターではないため、OPQ変換対象外。38x6独自フォーマット（.38x6）にのみ保存される。

@@ -1,4 +1,4 @@
 [package]
-name = "ym38x6-engine"
+name = "sound-core"
 version = "0.1.0"
 edition = "2021"

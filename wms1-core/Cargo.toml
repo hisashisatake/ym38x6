@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ym38x6-engine = { path = "../ym38x6-engine" }
+sound-core = { path = "../sound-core" }

@@ -43,15 +43,15 @@ cargo --version  # rustupでインストール済み前提
 ym38x6/
   Cargo.toml           ← ワークスペース
   spec.md              ← 設計仕様書
-  ym38x6-engine/       ← WaveTable・AdsrParams・SoundEngineトレイト（基盤ライブラリ）
-  wms1-core/           ← WMS-1エンジン実装（ym38x6-engineに依存）
+  sound-core/          ← WaveTable・AdsrParams・SoundEngineトレイト（基盤ライブラリ）
+  wms1-core/           ← WMS-1エンジン実装（sound-coreに依存）
   wms1-vst/            ← WMS-1 VST3/CLAPプラグイン（nih-plug）
   ym38x6-app/          ← 作曲支援Tauriアプリ
     src-tauri/         ← Rustバックエンド（cpalで音声出力）
     src/               ← フロントエンド
 ```
 
-`ym38x6-engine` と `wms1-core` はnih-plugにもTauriにも依存しない純粋なRustライブラリ。
+`sound-core` と `wms1-core` はnih-plugにもTauriにも依存しない純粋なRustライブラリ。
 音源エンジンの変更はこの2クレートに閉じる。
 
 ---
@@ -65,10 +65,10 @@ ym38x6/
 cargo check --workspace --message-format=short
 
 # コアライブラリのみ
-cargo check -p ym38x6-engine -p wms1-core --message-format=short
+cargo check -p sound-core -p wms1-core --message-format=short
 
 # テスト
-cargo test -p ym38x6-engine
+cargo test -p sound-core
 cargo test -p wms1-core
 ```
 
@@ -90,10 +90,10 @@ npm run tauri build
 
 ## アーキテクチャ
 
-### 音源レイヤー（ym38x6-engine / wms1-core）
+### 音源レイヤー（sound-core / wms1-core）
 
 ```
-ym38x6-engine（基盤）
+sound-core（基盤）
   WaveTable（1024×u16 log符号化）
   AdsrParams
   SoundEngineトレイト
@@ -133,7 +133,7 @@ stream = device.build_output_stream(&config, move |output: &mut [f32], _| {
 
 ## 開発方針
 
-- `ym38x6-engine` と `wms1-core` は常にnih-plug・Tauri・cpalに無依存を保つ
+- `sound-core` と `wms1-core` は常にnih-plug・Tauri・cpalに無依存を保つ
 - 波形フォーマットはWMS-1/38x6で共通（1024×uint16_t対数）。変換パイプラインはコアに実装
 - フェーズ1の目的はジェスチャーUIとコード判定ロジックの検証。音色品質は後回しでよい
 - パラメーターは全て0〜255（8bit）統一。周波数（オクターブ3bit + F-Number 13bit = 16bit、常にOP単位×4）のみ例外

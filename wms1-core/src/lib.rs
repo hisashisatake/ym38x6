@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use ym38x6_engine::{WaveTable, gen_sine, gen_square, gen_sawtooth, gen_triangle};
+use sound_core::{WaveTable, gen_sine, gen_square, gen_sawtooth, gen_triangle};
 
-// 呼び出し側が ym38x6-engine に直接依存しなくて済むよう re-export
-pub use ym38x6_engine::{AdsrParams, SoundEngine, convert_wave_32};
+// 呼び出し側が sound-core に直接依存しなくて済むよう re-export
+pub use sound_core::{AdsrParams, SoundEngine, convert_wave_32};
 
 // ---------------------------------------------------------------------------
 // ADSR ヘルパー
