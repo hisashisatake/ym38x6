@@ -4,16 +4,16 @@ use std::f32::consts::TAU;
 // パラメーターマッピング
 // ---------------------------------------------------------------------------
 
-/// rate=0 → 0.1Hz, rate=255 → 20Hz（指数マッピング）
+/// rate=0 → 0.01Hz, rate=255 → 20Hz（指数マッピング）
 fn rate_to_hz(rate: u8) -> f32 {
-    const F_MIN: f32 = 0.1;
+    const F_MIN: f32 = 0.01;
     const F_MAX: f32 = 20.0;
     F_MIN * (F_MAX / F_MIN).powf(rate as f32 / 255.0)
 }
 
-/// delay=0 → 0秒, delay=255 → 5秒（線形マッピング）
+/// delay=0 → 0秒, delay=255 → 10秒（線形マッピング）
 fn delay_to_seconds(delay: u8) -> f32 {
-    const D_MAX: f32 = 5.0;
+    const D_MAX: f32 = 10.0;
     delay as f32 / 255.0 * D_MAX
 }
 
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn rate_to_hz_bounds() {
-        assert!((rate_to_hz(0) - 0.1).abs() < 1e-6, "{}", rate_to_hz(0));
+        assert!((rate_to_hz(0) - 0.01).abs() < 1e-6, "{}", rate_to_hz(0));
         assert!((rate_to_hz(255) - 20.0).abs() < 1e-4, "{}", rate_to_hz(255));
         assert!(rate_to_hz(255) > rate_to_hz(0));
     }
@@ -139,6 +139,6 @@ mod tests {
     #[test]
     fn delay_to_seconds_bounds() {
         assert_eq!(delay_to_seconds(0), 0.0);
-        assert!((delay_to_seconds(255) - 5.0).abs() < 1e-6);
+        assert!((delay_to_seconds(255) - 10.0).abs() < 1e-6);
     }
 }

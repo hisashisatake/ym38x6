@@ -77,13 +77,13 @@ fn sample_hold_lfo_updates_and_stays_in_range() {
 fn delay_gates_output_until_elapsed() {
     let mut lfo = PerformanceLfo::new();
     lfo.set_rate(255);
-    lfo.set_delay(128); // delay_to_seconds(128) ≈ 2.51秒
+    lfo.set_delay(128); // delay_to_seconds(128) ≈ 5.02秒
     lfo.set_waveform(LfoWaveform::Triangle);
     lfo.note_on();
 
     let sample_rate = 1000.0;
 
-    let before: Vec<f32> = (0..2500).map(|_| lfo.tick(sample_rate)).collect();
+    let before: Vec<f32> = (0..5000).map(|_| lfo.tick(sample_rate)).collect();
     assert!(before.iter().all(|&v| v == 0.0), "expected silence during delay");
 
     let after: Vec<f32> = (0..100).map(|_| lfo.tick(sample_rate)).collect();
