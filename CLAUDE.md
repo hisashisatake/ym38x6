@@ -11,6 +11,10 @@
 
 ## 環境
 
+### シェル
+
+作業はPowerShellを基本とする。bash（Git Bash）はForkに同梱されたものに依存しており、PCによって有無が変わるため使用しない。
+
 ### git
 
 ```powershell
