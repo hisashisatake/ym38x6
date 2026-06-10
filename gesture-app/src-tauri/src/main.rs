@@ -4,7 +4,8 @@ mod settings;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
-use wms1_core::{AdsrParams, SoundEngine, Wms1Engine};
+use wms1_core::{AdsrParams, LfoDestination, LfoWaveform, SoundEngine, Wms1Engine,
+    pitch_depth_cents, volume_depth};
 
 #[tauri::command]
 fn note_on(
@@ -18,6 +19,36 @@ fn note_on(
 #[tauri::command]
 fn note_off(engine: tauri::State<'_, Arc<Mutex<Wms1Engine>>>, channel: usize) {
     engine.lock().unwrap().note_off(channel);
+}
+
+/// パフォーマンスLFOを設定する。
+/// `waveform`: 0=Triangle / 1=Sine / 2=Square / 3=S&H（Performance LFO Waveform enum準拠）
+/// `destination`: 0=Pitch（ビブラート） / 1=Volume（トレモロ）
+/// `cc77`/`cc1`/`mod_depth_range`は仕様の実効Depth計算式（CC77/CC1/RPN0,5）への入力
+#[tauri::command]
+fn set_performance_lfo(
+    engine: tauri::State<'_, Arc<Mutex<Wms1Engine>>>,
+    channel: usize,
+    rate: u8,
+    delay: u8,
+    waveform: u8,
+    destination: u8,
+    cc77: u8,
+    cc1: u8,
+    mod_depth_range: u8,
+) {
+    let waveform = match waveform {
+        1 => LfoWaveform::Sine,
+        2 => LfoWaveform::Square,
+        3 => LfoWaveform::SampleHold,
+        _ => LfoWaveform::Triangle,
+    };
+    let destination = if destination == 1 { LfoDestination::Volume } else { LfoDestination::Pitch };
+    let depth = match destination {
+        LfoDestination::Pitch => pitch_depth_cents(cc77, cc1, mod_depth_range),
+        LfoDestination::Volume => volume_depth(cc77, cc1),
+    };
+    engine.lock().unwrap().set_performance_lfo(channel, rate, delay, waveform, destination, depth);
 }
 
 fn main() {
@@ -58,7 +89,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(engine)
-        .invoke_handler(tauri::generate_handler![note_on, note_off])
+        .invoke_handler(tauri::generate_handler![note_on, note_off, set_performance_lfo])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 

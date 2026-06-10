@@ -27,6 +27,41 @@ let currentWaveSlot = 0;
 const WAVE_NAMES = ['sine', 'square', 'saw', 'tri'];
 
 // ─────────────────────────────────────────────
+// パフォーマンスLFO（ビブラート/トレモロ）
+// ─────────────────────────────────────────────
+const LFO_RATE_DEFAULT = 140; // 中程度の速さ
+const LFO_RATE_STEP    = 8;
+const LFO_DELAY = 0;
+const LFO_WAVEFORM_TRIANGLE = 0;
+const LFO_DEST_PITCH  = 0; // ビブラート
+const LFO_DEST_VOLUME = 1; // トレモロ
+const MOD_DEPTH_RANGE = 64; // RPN0,5デフォルト（約50セント相当）
+const CC77_BASE = 0;        // Depthベース値は0固定。深さはマウスホイール（CC1相当）のみで制御
+
+let modWheel       = 0; // CC1相当。0〜255
+let lfoDestination = LFO_DEST_PITCH;
+let lfoRate        = LFO_RATE_DEFAULT;
+
+async function applyPerformanceLfo(channel) {
+  await invoke('set_performance_lfo', {
+    channel,
+    rate: lfoRate,
+    delay: LFO_DELAY,
+    waveform: LFO_WAVEFORM_TRIANGLE,
+    destination: lfoDestination,
+    cc77: CC77_BASE,
+    cc1: modWheel,
+    modDepthRange: MOD_DEPTH_RANGE,
+  });
+}
+
+async function applyPerformanceLfoToActiveChannels() {
+  for (const ch of activeChannels) {
+    await applyPerformanceLfo(ch);
+  }
+}
+
+// ─────────────────────────────────────────────
 // Canvas
 // ─────────────────────────────────────────────
 const canvas  = document.getElementById('canvas');
@@ -150,6 +185,7 @@ async function updateChord(px, py) {
         return;
       }
       activeChannels.push(ch);
+      await applyPerformanceLfo(ch);
     }
     lastChordKey = key;
     chordEl.textContent = root.name + chord.suffix;
@@ -189,12 +225,31 @@ async function releaseChord() {
 canvas.addEventListener('mouseup',    releaseChord);
 canvas.addEventListener('mouseleave', releaseChord);
 
+canvas.addEventListener('wheel', async (e) => {
+  if (state !== S.PLAYING) return;
+  e.preventDefault();
+  modWheel = Math.max(0, Math.min(255, modWheel - Math.sign(e.deltaY) * 8));
+  await applyPerformanceLfoToActiveChannels();
+}, { passive: false });
+
 window.addEventListener('keydown', async (e) => {
   if (e.key.toLowerCase() === 'r') {
     await stopChord();
     cal.C = cal.F = cal.G = null;
     cs = null; state = S.CAL_C; lastChordKey = null;
     chordEl.textContent = '—'; hintEl.textContent = '';
+  }
+  if (e.key.toLowerCase() === 'v') {
+    lfoDestination = lfoDestination === LFO_DEST_PITCH ? LFO_DEST_VOLUME : LFO_DEST_PITCH;
+    await applyPerformanceLfoToActiveChannels();
+  }
+  if (e.key.toLowerCase() === 'c') {
+    lfoRate = Math.max(0, lfoRate - LFO_RATE_STEP);
+    await applyPerformanceLfoToActiveChannels();
+  }
+  if (e.key.toLowerCase() === 'b') {
+    lfoRate = Math.min(255, lfoRate + LFO_RATE_STEP);
+    await applyPerformanceLfoToActiveChannels();
   }
   const slot = parseInt(e.key) - 1;
   if (slot >= 0 && slot <= 3) {
@@ -240,6 +295,7 @@ function draw() {
     drawCalibLayer(W, H);
   }
   drawWaveIndicator(W, H);
+  drawLfoIndicator(W, H);
 }
 
 function drawCalibLayer(W, H) {
@@ -371,6 +427,29 @@ function drawWaveIndicator(W, H) {
     ctx.fillStyle = isActive ? '#fa4' : '#444';
     ctx.fillText(`${i + 1}:${WAVE_NAMES[i]}`, W - 16, H - 16 - (WAVE_NAMES.length - 1 - i) * 20);
   }
+}
+
+function drawLfoIndicator() {
+  const label = lfoDestination === LFO_DEST_VOLUME ? 'Tremolo' : 'Vibrato';
+  const x = 16, barW = 100, barH = 6;
+
+  ctx.textAlign = 'left';
+  ctx.font = '13px monospace';
+  ctx.fillStyle = modWheel > 0 ? '#4af' : '#444';
+  ctx.fillText(`LFO: ${label} (V)`, x, 28);
+
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, 38, barW, barH);
+  ctx.fillStyle = '#4af';
+  ctx.fillRect(x, 38, barW * (modWheel / 255), barH);
+
+  ctx.fillStyle = '#666';
+  ctx.fillText(`Rate: ${lfoRate} (C/B)`, x, 64);
+  ctx.strokeStyle = '#444';
+  ctx.strokeRect(x, 70, barW, barH);
+  ctx.fillStyle = '#888';
+  ctx.fillRect(x, 70, barW * (lfoRate / 255), barH);
 }
 
 // ─────────────────────────────────────────────
