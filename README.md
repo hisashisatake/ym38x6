@@ -38,7 +38,7 @@ A waveform memory sound source — equivalent to one operator of the 38x6 FM eng
 - ADSR envelope: all parameters 0–255 (8-bit unified), exponential rate mapping
 - Unlimited polyphony via `HashMap`-based stable channel IDs
 
-### 38x6 FM Engine (Phase 2+)
+### 38x6 FM Engine (Phase 3+)
 
 4-operator FM synthesis, OPQ-derived with OPZ waveform extensions.
 
@@ -66,7 +66,7 @@ Click C major, F major, and G major at positions that feel natural. The I–IV�
 
 The gesture system requires no recognition algorithm — everything is continuous coordinate-to-pitch mapping. An ∞ motion naturally produces vibrato.
 
-### Avoid Note Handling (Phase 3+)
+### Avoid Note Handling (Phase 7)
 
 Selectable handling for notes outside the current scale:
 - **Snap** — auto-correct to the nearest scale tone
@@ -78,14 +78,15 @@ Selectable handling for notes outside the current scale:
 
 | Phase | Scope |
 |-------|-------|
-| 1 | WMS-1 + Tauri desktop app + gesture UI (current) |
-| 2 | 38x6 FM engine, waveform selection, detune |
-| 3 | Per-operator F-Number, per-operator key-on |
-| 4 | Parameter UI, preset save/load, PSR-70 converter, GM2 Bank 0 program set, master effects (Reverb/Chorus) |
-| 5 | Tablet support (Tauri v2 iOS/Android) |
+| 1 | WMS-1 + Tauri desktop app + gesture UI (done) |
+| 2 | Performance LFO + master effects (Reverb/Chorus) |
+| 3 | 38x6 FM engine, waveform selection, detune |
+| 4 | Per-operator F-Number, per-operator key-on |
+| 5 | Parameter UI, preset save/load, GM2 Bank 0 program set via ML-based tone generation (`ym38x6-ml`) |
 | 6 | VST3/CLAP plugin via nih-plug (optional) |
-| 7 | Algorithm routing extension (SY77-style, optional) |
-| 8 | ML-based tone generation (`ym38x6-ml`, optional) |
+| 7 | Scale detection / avoid note handling |
+| 8 | Tablet support (Tauri v2 iOS/Android) |
+| 9 | Algorithm routing extension (SY77-style, optional) |
 
 ## Building
 

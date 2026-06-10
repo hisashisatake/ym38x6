@@ -105,7 +105,7 @@ wms1-core（WMS-1実装）
   波形変換：32サンプルi8入力 → 1024サンプル対数フォーマット
   PerformanceLfoTarget実装（Pitch→周波数、Volume→ADSR出力レベル）
 
-38x6エンジン（フェーズ2以降）
+38x6エンジン（フェーズ3以降）
   4opFM合成
   WMS-1と同一の波形フォーマット（移行コストなし）
   PerformanceLfoTarget実装（共通Destination + 拡張Destination=2: TLキャリア一括）
@@ -130,7 +130,7 @@ stream = device.build_output_stream(&config, move |output: &mut [f32], _| {
 - キャリブレーションベース（C-F-Gの3点で座標系を定義）
 - グリッドなし
 - マウス版: 縦軸=ルート音、横軸=コード種類
-- タッチ版（フェーズ5）: 指の間隔=インターバル、指の移動=ルート音シフト
+- タッチ版（フェーズ8）: 指の間隔=インターバル、指の移動=ルート音シフト
 - ∞ジェスチャー: 軌跡がそのままF-Numberに追従（ビブラート・装飾音）
 
 ---
@@ -139,5 +139,4 @@ stream = device.build_output_stream(&config, move |output: &mut [f32], _| {
 
 - `sound-core` と `wms1-core` は常にnih-plug・Tauri・cpalに無依存を保つ
 - 波形フォーマットはWMS-1/38x6で共通（1024×uint16_t対数）。変換パイプラインはコアに実装
-- フェーズ1の目的はジェスチャーUIとコード判定ロジックの検証。音色品質は後回しでよい
 - パラメーターは全て0〜255（8bit）統一。周波数（オクターブ3bit + F-Number 13bit = 16bit、常にOP単位×4）のみ例外
