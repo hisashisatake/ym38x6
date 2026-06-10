@@ -140,3 +140,4 @@ stream = device.build_output_stream(&config, move |output: &mut [f32], _| {
 - `sound-core` と `wms1-core` は常にnih-plug・Tauri・cpalに無依存を保つ
 - 波形フォーマットはWMS-1/38x6で共通（1024×uint16_t対数）。変換パイプラインはコアに実装
 - パラメーターは全て0〜255（8bit）統一。周波数（オクターブ3bit + F-Number 13bit = 16bit、常にOP単位×4）のみ例外
+- `sound-core`/`wms1-core`に新機能を実装したら、同じタイミングで`wms1-vst`（該当する機能があれば将来の`ym38x6-vst`も）に配線し、VST単体でも機能が使える状態を保つ。MIDI CC/RPN/NRPNの受信処理やパラメーター追加など、VST側対応が必要な場合は実装範囲に含める
