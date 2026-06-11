@@ -1,7 +1,63 @@
 use nih_plug::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use wms1_core::{AdsrParams, SoundEngine, Wms1Engine};
+use wms1_core::{AdsrParams, LfoDestination, LfoWaveform, SoundEngine, Wms1Engine,
+    pitch_depth_cents, volume_depth};
+
+/// MIDI CC値（0.0〜1.0正規化）を本プロジェクトの内部表現（0〜255）に変換
+fn cc_to_u8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// MIDI CC値（0.0〜1.0正規化）をGM2準拠の7bit値（0〜127）に変換
+fn cc_to_u7(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 127.0).round() as u8
+}
+
+/// パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN Destination/Waveform）の状態
+struct PerformanceLfoState {
+    cc1: u8,    // CC1 Modulation Wheel（Depth加算分）
+    rate: u8,   // CC76 Vibrato Rate
+    cc77: u8,   // CC77 Vibrato Depth（ベース値）
+    delay: u8,  // CC78 Vibrato Delay
+    rpn0_5: u8, // RPN0,5 Modulation Depth Range（GM2準拠 0〜127、デフォルト64）
+    destination: LfoDestination, // NRPN(0,0) Performance LFO Destination
+    waveform: LfoWaveform,       // NRPN(0,1) Performance LFO Waveform
+}
+
+impl Default for PerformanceLfoState {
+    fn default() -> Self {
+        Self {
+            cc1: 0,
+            rate: 0,
+            cc77: 0,
+            delay: 0,
+            rpn0_5: 64,
+            destination: LfoDestination::Pitch,
+            waveform: LfoWaveform::Triangle,
+        }
+    }
+}
+
+impl PerformanceLfoState {
+    /// Destinationに応じた実効Depth（spec.md パフォーマンスLFOセクション参照）
+    fn depth(&self) -> f32 {
+        match self.destination {
+            LfoDestination::Pitch => pitch_depth_cents(self.cc77, self.cc1, self.rpn0_5),
+            LfoDestination::Volume => volume_depth(self.cc77, self.cc1),
+        }
+    }
+}
+
+/// CC99/98(NRPN)・CC101/100(RPN) で選択中のパラメーター番号。
+/// CC6(Data Entry MSB)はこの選択状態に応じて値を適用する。
+#[derive(Clone, Copy, PartialEq, Default)]
+enum RpnSelection {
+    #[default]
+    None,
+    Rpn(u8, u8),
+    Nrpn(u8, u8),
+}
 
 struct Wms1Plugin {
     params: Arc<Wms1Params>,
@@ -9,6 +65,12 @@ struct Wms1Plugin {
     note_channels: HashMap<u8, usize>, // MIDIノート番号 → エンジンチャンネルID
     render_buffer: Vec<f32>,           // プロセスコールバック用インターリーブ作業バッファ
     sample_rate: f32,
+    lfo_state: PerformanceLfoState,
+    rpn_msb: u8,
+    rpn_lsb: u8,
+    nrpn_msb: u8,
+    nrpn_lsb: u8,
+    rpn_selection: RpnSelection,
 }
 
 #[derive(Params)]
@@ -55,6 +117,72 @@ impl Default for Wms1Plugin {
             note_channels: HashMap::new(),
             render_buffer: Vec::new(),
             sample_rate: DEFAULT_SR,
+            lfo_state: PerformanceLfoState::default(),
+            rpn_msb: 0,
+            rpn_lsb: 0,
+            nrpn_msb: 0,
+            nrpn_lsb: 0,
+            rpn_selection: RpnSelection::default(),
+        }
+    }
+}
+
+impl Wms1Plugin {
+    /// 指定チャンネルへ現在のパフォーマンスLFO設定を適用する
+    fn apply_performance_lfo(&mut self, channel: usize) {
+        let rate = self.lfo_state.rate;
+        let delay = self.lfo_state.delay;
+        let waveform = self.lfo_state.waveform;
+        let destination = self.lfo_state.destination;
+        let depth = self.lfo_state.depth();
+        self.engine.set_performance_lfo(channel, rate, delay, waveform, destination, depth);
+    }
+
+    /// 発音中の全チャンネルへ現在のパフォーマンスLFO設定を再適用する
+    fn apply_performance_lfo_to_active(&mut self) {
+        let channels: Vec<usize> = self.note_channels.values().copied().collect();
+        for ch in channels {
+            self.apply_performance_lfo(ch);
+        }
+    }
+
+    /// CC99/98(NRPN)・CC101/100(RPN)受信時に選択状態を更新する。
+    /// MSB,LSB=127,127（Null）の場合は選択解除する
+    fn update_rpn_selection(&mut self, is_nrpn: bool) {
+        let (msb, lsb) = if is_nrpn { (self.nrpn_msb, self.nrpn_lsb) } else { (self.rpn_msb, self.rpn_lsb) };
+        self.rpn_selection = if msb == 127 && lsb == 127 {
+            RpnSelection::None
+        } else if is_nrpn {
+            RpnSelection::Nrpn(msb, lsb)
+        } else {
+            RpnSelection::Rpn(msb, lsb)
+        };
+    }
+
+    /// CC6(Data Entry MSB)受信時、選択中のRPN/NRPNに応じて値を適用する
+    fn handle_data_entry(&mut self, value: u8) {
+        match self.rpn_selection {
+            // RPN0,5: Modulation Depth Range
+            RpnSelection::Rpn(0, 5) => {
+                self.lfo_state.rpn0_5 = value;
+                self.apply_performance_lfo_to_active();
+            }
+            // NRPN(0,0): Performance LFO Destination
+            RpnSelection::Nrpn(0, 0) => {
+                self.lfo_state.destination = if value == 0 { LfoDestination::Pitch } else { LfoDestination::Volume };
+                self.apply_performance_lfo_to_active();
+            }
+            // NRPN(0,1): Performance LFO Waveform
+            RpnSelection::Nrpn(0, 1) => {
+                self.lfo_state.waveform = match value {
+                    1 => LfoWaveform::Sine,
+                    2 => LfoWaveform::Square,
+                    3 => LfoWaveform::SampleHold,
+                    _ => LfoWaveform::Triangle,
+                };
+                self.apply_performance_lfo_to_active();
+            }
+            _ => {}
         }
     }
 }
@@ -72,7 +200,7 @@ impl Plugin for Wms1Plugin {
         ..AudioIOLayout::const_default()
     }];
 
-    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+    const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
     const SAMPLE_ACCURATE_AUTOMATION: bool = false;
 
     type SysExMessage = ();
@@ -103,6 +231,12 @@ impl Plugin for Wms1Plugin {
     fn reset(&mut self) {
         self.note_channels.clear();
         self.engine = Wms1Engine::new(self.sample_rate);
+        self.lfo_state = PerformanceLfoState::default();
+        self.rpn_msb = 0;
+        self.rpn_lsb = 0;
+        self.nrpn_msb = 0;
+        self.nrpn_lsb = 0;
+        self.rpn_selection = RpnSelection::default();
     }
 
     fn process(
@@ -129,6 +263,7 @@ impl Plugin for Wms1Plugin {
                     let freq = 440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0);
                     let ch_id = self.engine.note_on(wave_slot, freq, adsr);
                     self.note_channels.insert(note, ch_id);
+                    self.apply_performance_lfo(ch_id);
                 }
                 NoteEvent::NoteOn { note, .. } | NoteEvent::NoteOff { note, .. } => {
                     // velocity=0 の NoteOn も NoteOff として扱う（MIDI仕様）
@@ -137,6 +272,19 @@ impl Plugin for Wms1Plugin {
                         self.note_channels.remove(&note);
                     }
                 }
+                // パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN Destination/Waveform）
+                NoteEvent::MidiCC { cc, value, .. } => match cc {
+                    1  => { self.lfo_state.cc1   = cc_to_u8(value); self.apply_performance_lfo_to_active(); }
+                    76 => { self.lfo_state.rate  = cc_to_u8(value); self.apply_performance_lfo_to_active(); }
+                    77 => { self.lfo_state.cc77  = cc_to_u8(value); self.apply_performance_lfo_to_active(); }
+                    78 => { self.lfo_state.delay = cc_to_u8(value); self.apply_performance_lfo_to_active(); }
+                    98  => { self.nrpn_lsb = cc_to_u7(value); self.update_rpn_selection(true); }
+                    99  => { self.nrpn_msb = cc_to_u7(value); self.update_rpn_selection(true); }
+                    100 => { self.rpn_lsb  = cc_to_u7(value); self.update_rpn_selection(false); }
+                    101 => { self.rpn_msb  = cc_to_u7(value); self.update_rpn_selection(false); }
+                    6   => self.handle_data_entry(cc_to_u7(value)),
+                    _ => {}
+                },
                 _ => {}
             }
         }
