@@ -4,8 +4,8 @@ mod settings;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
-use wms1_core::{AdsrParams, LfoDestination, LfoWaveform, SoundEngine, Wms1Engine,
-    pitch_depth_cents, volume_depth};
+use wms1_core::{AdsrParams, ChorusType, LfoDestination, LfoWaveform, MasterEffects, ReverbType,
+    SoundEngine, Wms1Engine, pitch_depth_cents, volume_depth};
 
 #[tauri::command]
 fn note_on(
@@ -51,6 +51,33 @@ fn set_performance_lfo(
     engine.lock().unwrap().set_performance_lfo(channel, rate, delay, waveform, destination, depth);
 }
 
+/// マスターエフェクト（Reverb/Chorus）を設定する。
+/// `reverb_type`/`chorus_type`は0〜7（spec.md マスターエフェクトセクションのenum参照）
+#[tauri::command]
+fn set_master_effects(
+    effects: tauri::State<'_, Arc<Mutex<MasterEffects>>>,
+    reverb_send: u8,
+    reverb_type: u8,
+    reverb_time: u8,
+    chorus_send: u8,
+    chorus_type: u8,
+    chorus_mod_rate: u8,
+    chorus_mod_depth: u8,
+    chorus_feedback: u8,
+    chorus_send_to_reverb: u8,
+) {
+    let mut fx = effects.lock().unwrap();
+    fx.set_reverb_send(reverb_send);
+    fx.set_reverb_type(ReverbType::from_u8(reverb_type));
+    fx.set_reverb_time(reverb_time);
+    fx.set_chorus_send(chorus_send);
+    fx.set_chorus_type(ChorusType::from_u8(chorus_type));
+    fx.set_chorus_mod_rate(chorus_mod_rate);
+    fx.set_chorus_mod_depth(chorus_mod_depth);
+    fx.set_chorus_feedback(chorus_feedback);
+    fx.set_chorus_send_to_reverb(chorus_send_to_reverb);
+}
+
 fn main() {
     let settings = settings::Settings::load();
     // ステップ5でエンジン切り替えを実装。現時点は wms1 固定
@@ -70,6 +97,8 @@ fn main() {
 
     let engine = Arc::new(Mutex::new(Wms1Engine::new(sample_rate)));
     let engine_audio = Arc::clone(&engine);
+    let effects = Arc::new(Mutex::new(MasterEffects::new(sample_rate)));
+    let effects_audio = Arc::clone(&effects);
 
     let stream = device
         .build_output_stream::<f32, _, _>(
@@ -78,6 +107,9 @@ fn main() {
                 output.fill(0.0);
                 if let Ok(mut eng) = engine_audio.try_lock() {
                     eng.render(output, num_channels);
+                }
+                if let Ok(mut fx) = effects_audio.try_lock() {
+                    fx.process(output, num_channels);
                 }
             },
             |err| eprintln!("audio error: {err}"),
@@ -89,7 +121,8 @@ fn main() {
 
     tauri::Builder::default()
         .manage(engine)
-        .invoke_handler(tauri::generate_handler![note_on, note_off, set_performance_lfo])
+        .manage(effects)
+        .invoke_handler(tauri::generate_handler![note_on, note_off, set_performance_lfo, set_master_effects])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 
