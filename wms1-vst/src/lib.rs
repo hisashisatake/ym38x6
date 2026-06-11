@@ -4,6 +4,13 @@ use std::sync::Arc;
 use wms1_core::{AdsrParams, ChorusType, LfoDestination, LfoWaveform, MasterEffects, ReverbType,
     SoundEngine, Wms1Engine, pitch_depth_cents, volume_depth};
 
+/// マスター単位5パラメーターのデフォルト値（`MasterEffects::new()`の内部初期値と一致させる）
+const DEFAULT_REVERB_TIME: u8 = 128;
+const DEFAULT_CHORUS_MOD_RATE: u8 = 128;
+const DEFAULT_CHORUS_MOD_DEPTH: u8 = 128;
+const DEFAULT_CHORUS_FEEDBACK: u8 = 0;
+const DEFAULT_CHORUS_SEND_TO_REVERB: u8 = 0;
+
 /// MIDI CC値（0.0〜1.0正規化）を本プロジェクトの内部表現（0〜255）に変換
 fn cc_to_u8(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
@@ -72,6 +79,14 @@ struct Wms1Plugin {
     nrpn_msb: u8,
     nrpn_lsb: u8,
     rpn_selection: RpnSelection,
+    // マスター単位5パラメーターの「前回ブロックで適用したnih-plug値」。
+    // NRPN(0,4)〜(0,8)はeffectsへ直接書き込むため、ここと一致している間は
+    // process()側からの再適用をスキップしてNRPN設定値を保持する（差分検知方式）。
+    last_reverb_time: u8,
+    last_chorus_mod_rate: u8,
+    last_chorus_mod_depth: u8,
+    last_chorus_feedback: u8,
+    last_chorus_send_to_reverb: u8,
 }
 
 #[derive(Params)]
@@ -86,6 +101,18 @@ struct Wms1Params {
     pub sustain: IntParam,
     #[id = "rel"]
     pub release: IntParam,
+    // マスター単位5パラメーター（spec.md マスターエフェクトセクション参照）。
+    // NRPN(0,4)〜(0,8)とも対応するが、両者の併存は差分検知方式で行う（process()参照）。
+    #[id = "rev_time"]
+    pub reverb_time: IntParam,
+    #[id = "cho_rate"]
+    pub chorus_mod_rate: IntParam,
+    #[id = "cho_depth"]
+    pub chorus_mod_depth: IntParam,
+    #[id = "cho_fb"]
+    pub chorus_feedback: IntParam,
+    #[id = "cho_to_rev"]
+    pub chorus_send_to_reverb: IntParam,
 }
 
 impl Default for Wms1Params {
@@ -105,6 +132,11 @@ impl Default for Wms1Params {
             decay:   IntParam::new("Decay",   150, IntRange::Linear { min: 0, max: 255 }),
             sustain: IntParam::new("Sustain", 180, IntRange::Linear { min: 0, max: 255 }),
             release: IntParam::new("Release", 100, IntRange::Linear { min: 0, max: 255 }),
+            reverb_time: IntParam::new("Reverb Time", DEFAULT_REVERB_TIME as i32, IntRange::Linear { min: 0, max: 255 }),
+            chorus_mod_rate: IntParam::new("Chorus Mod Rate", DEFAULT_CHORUS_MOD_RATE as i32, IntRange::Linear { min: 0, max: 255 }),
+            chorus_mod_depth: IntParam::new("Chorus Mod Depth", DEFAULT_CHORUS_MOD_DEPTH as i32, IntRange::Linear { min: 0, max: 255 }),
+            chorus_feedback: IntParam::new("Chorus Feedback", DEFAULT_CHORUS_FEEDBACK as i32, IntRange::Linear { min: 0, max: 255 }),
+            chorus_send_to_reverb: IntParam::new("Chorus Send To Reverb", DEFAULT_CHORUS_SEND_TO_REVERB as i32, IntRange::Linear { min: 0, max: 255 }),
         }
     }
 }
@@ -125,6 +157,11 @@ impl Default for Wms1Plugin {
             nrpn_msb: 0,
             nrpn_lsb: 0,
             rpn_selection: RpnSelection::default(),
+            last_reverb_time: DEFAULT_REVERB_TIME,
+            last_chorus_mod_rate: DEFAULT_CHORUS_MOD_RATE,
+            last_chorus_mod_depth: DEFAULT_CHORUS_MOD_DEPTH,
+            last_chorus_feedback: DEFAULT_CHORUS_FEEDBACK,
+            last_chorus_send_to_reverb: DEFAULT_CHORUS_SEND_TO_REVERB,
         }
     }
 }
@@ -271,6 +308,11 @@ impl Plugin for Wms1Plugin {
         self.nrpn_msb = 0;
         self.nrpn_lsb = 0;
         self.rpn_selection = RpnSelection::default();
+        self.last_reverb_time = DEFAULT_REVERB_TIME;
+        self.last_chorus_mod_rate = DEFAULT_CHORUS_MOD_RATE;
+        self.last_chorus_mod_depth = DEFAULT_CHORUS_MOD_DEPTH;
+        self.last_chorus_feedback = DEFAULT_CHORUS_FEEDBACK;
+        self.last_chorus_send_to_reverb = DEFAULT_CHORUS_SEND_TO_REVERB;
     }
 
     fn process(
@@ -286,6 +328,35 @@ impl Plugin for Wms1Plugin {
             release: self.params.release.value() as u8,
         };
         let wave_slot = self.params.wave_slot.value() as u8;
+
+        // マスター単位5パラメーター：DAWオートメーションで値が変化した場合のみeffectsへ反映する。
+        // NRPN(0,4)〜(0,8)はeffectsへ直接書き込まれ、ここでの値が前回と同じ間は上書きされない
+        // （差分検知方式。NRPNの変更はnih-plug側のパラメーター表示には反映されない）。
+        let reverb_time = self.params.reverb_time.value() as u8;
+        if reverb_time != self.last_reverb_time {
+            self.effects.set_reverb_time(reverb_time);
+            self.last_reverb_time = reverb_time;
+        }
+        let chorus_mod_rate = self.params.chorus_mod_rate.value() as u8;
+        if chorus_mod_rate != self.last_chorus_mod_rate {
+            self.effects.set_chorus_mod_rate(chorus_mod_rate);
+            self.last_chorus_mod_rate = chorus_mod_rate;
+        }
+        let chorus_mod_depth = self.params.chorus_mod_depth.value() as u8;
+        if chorus_mod_depth != self.last_chorus_mod_depth {
+            self.effects.set_chorus_mod_depth(chorus_mod_depth);
+            self.last_chorus_mod_depth = chorus_mod_depth;
+        }
+        let chorus_feedback = self.params.chorus_feedback.value() as u8;
+        if chorus_feedback != self.last_chorus_feedback {
+            self.effects.set_chorus_feedback(chorus_feedback);
+            self.last_chorus_feedback = chorus_feedback;
+        }
+        let chorus_send_to_reverb = self.params.chorus_send_to_reverb.value() as u8;
+        if chorus_send_to_reverb != self.last_chorus_send_to_reverb {
+            self.effects.set_chorus_send_to_reverb(chorus_send_to_reverb);
+            self.last_chorus_send_to_reverb = chorus_send_to_reverb;
+        }
 
         while let Some(event) = context.next_event() {
             match event {
