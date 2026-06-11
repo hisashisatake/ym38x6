@@ -293,6 +293,11 @@ GM2準拠のセンドエフェクト2系統。各ボイス（FM合成 → SVFフ
 | Chorus Feedback | NRPN | 0〜255 | マスター |
 | Chorus Send To Reverb | NRPN | 0〜255 | マスター。GM2準拠、ChorusバスからReverbバスへの送り量 |
 
+※「Reverb Time」「Chorus Mod Rate/Depth/Feedback」「Chorus Send To Reverb」は、
+NRPNに加えてnih-plugのマスターパラメーターとしても公開する
+（MIDI実装方針のDAWオートメーション参照）。
+「Reverb Type」「Chorus Type」はNRPN専用（DAWオートメーション対象外）。
+
 **Reverb Type enum（GM2/GS準拠）：**
 
 | 値 | タイプ |
@@ -439,7 +444,11 @@ TL / AR / D1R / D2R / D1L / RR / MUL / DT1 / KS / AME / Velocity Sensitivity
 **マスター単位（5個）：**
 Reverb Time / Chorus Mod Rate / Chorus Mod Depth / Chorus Feedback / Chorus Send To Reverb
 
-**離散パラメーター（NRPN・GUI操作のみ、DAWオートメーション対象外）：**
+**離散パラメーター（NRPN専用、DAWオートメーション対象外）：**
+以下はnih-plugパラメーターを持たず、NRPN/GUI操作でのみ設定する
+（CC91/93やマスターエフェクトの「マスター単位」パラメーターのように、
+NRPN/CCとnih-plugパラメーターを併用する項目とは異なる点に注意）。
+
 Algorithm / Waveform（WF）per op / Filter Type（LP/HP/BP）/ Filter Self-Oscillation / AT Destination / Poly AT Destination / Performance LFO Destination / Performance LFO Waveform / Reverb Type / Chorus Type
 
 ### MIDI CC（GM2準拠）
@@ -551,6 +560,13 @@ NRPN番号は本実装（パフォーマンスLFO）で初めて定義する。M
 |---|---|---|
 | Performance LFO Destination | 0, 0 | 0=Pitch（ビブラート） / 1=Volume（トレモロ） |
 | Performance LFO Waveform | 0, 1 | 0=三角波 / 1=サイン波 / 2=矩形波 / 3=S&H |
+| Reverb Type | 0, 2 | 0〜7（マスターエフェクトセクションのenum参照） |
+| Chorus Type | 0, 3 | 0〜7（マスターエフェクトセクションのenum参照） |
+| Reverb Time | 0, 4 | 0〜255 |
+| Chorus Mod Rate | 0, 5 | 0〜255 |
+| Chorus Mod Depth | 0, 6 | 0〜255 |
+| Chorus Feedback | 0, 7 | 0〜255 |
+| Chorus Send To Reverb | 0, 8 | 0〜255 |
 
 **AT Destination / Poly AT Destination（アフタータッチの加算先）：**
 
