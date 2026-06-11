@@ -4,7 +4,7 @@ use sound_core::{WaveTable, gen_sine, gen_square, gen_sawtooth, gen_triangle,
 
 // 呼び出し側が sound-core に直接依存しなくて済むよう re-export
 pub use sound_core::{AdsrParams, SoundEngine, convert_wave_32, LfoDestination, LfoWaveform,
-    pitch_depth_cents, volume_depth};
+    pitch_depth_cents, volume_depth, MasterEffects, ReverbType, ChorusType};
 
 // ---------------------------------------------------------------------------
 // ADSR ヘルパー

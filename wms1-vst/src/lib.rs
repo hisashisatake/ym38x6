@@ -1,8 +1,8 @@
 use nih_plug::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use wms1_core::{AdsrParams, LfoDestination, LfoWaveform, SoundEngine, Wms1Engine,
-    pitch_depth_cents, volume_depth};
+use wms1_core::{AdsrParams, ChorusType, LfoDestination, LfoWaveform, MasterEffects, ReverbType,
+    SoundEngine, Wms1Engine, pitch_depth_cents, volume_depth};
 
 /// MIDI CC値（0.0〜1.0正規化）を本プロジェクトの内部表現（0〜255）に変換
 fn cc_to_u8(value: f32) -> u8 {
@@ -62,6 +62,7 @@ enum RpnSelection {
 struct Wms1Plugin {
     params: Arc<Wms1Params>,
     engine: Wms1Engine,
+    effects: MasterEffects,
     note_channels: HashMap<u8, usize>, // MIDIノート番号 → エンジンチャンネルID
     render_buffer: Vec<f32>,           // プロセスコールバック用インターリーブ作業バッファ
     sample_rate: f32,
@@ -114,6 +115,7 @@ impl Default for Wms1Plugin {
         Self {
             params: Arc::new(Wms1Params::default()),
             engine: Wms1Engine::new(DEFAULT_SR),
+            effects: MasterEffects::new(DEFAULT_SR),
             note_channels: HashMap::new(),
             render_buffer: Vec::new(),
             sample_rate: DEFAULT_SR,
@@ -159,28 +161,58 @@ impl Wms1Plugin {
         };
     }
 
-    /// CC6(Data Entry MSB)受信時、選択中のRPN/NRPNに応じて値を適用する
-    fn handle_data_entry(&mut self, value: u8) {
+    /// CC6(Data Entry MSB)受信時、選択中のRPN/NRPNに応じて値を適用する。
+    /// `value`はCC値の正規化値（0.0〜1.0）。enum系パラメーターは`cc_to_u7`、
+    /// 0〜255連続値パラメーターは`cc_to_u8`で変換する
+    fn handle_data_entry(&mut self, value: f32) {
         match self.rpn_selection {
             // RPN0,5: Modulation Depth Range
             RpnSelection::Rpn(0, 5) => {
-                self.lfo_state.rpn0_5 = value;
+                self.lfo_state.rpn0_5 = cc_to_u7(value);
                 self.apply_performance_lfo_to_active();
             }
             // NRPN(0,0): Performance LFO Destination
             RpnSelection::Nrpn(0, 0) => {
-                self.lfo_state.destination = if value == 0 { LfoDestination::Pitch } else { LfoDestination::Volume };
+                self.lfo_state.destination = if cc_to_u7(value) == 0 { LfoDestination::Pitch } else { LfoDestination::Volume };
                 self.apply_performance_lfo_to_active();
             }
             // NRPN(0,1): Performance LFO Waveform
             RpnSelection::Nrpn(0, 1) => {
-                self.lfo_state.waveform = match value {
+                self.lfo_state.waveform = match cc_to_u7(value) {
                     1 => LfoWaveform::Sine,
                     2 => LfoWaveform::Square,
                     3 => LfoWaveform::SampleHold,
                     _ => LfoWaveform::Triangle,
                 };
                 self.apply_performance_lfo_to_active();
+            }
+            // NRPN(0,2): Reverb Type
+            RpnSelection::Nrpn(0, 2) => {
+                self.effects.set_reverb_type(ReverbType::from_u8(cc_to_u7(value)));
+            }
+            // NRPN(0,3): Chorus Type
+            RpnSelection::Nrpn(0, 3) => {
+                self.effects.set_chorus_type(ChorusType::from_u8(cc_to_u7(value)));
+            }
+            // NRPN(0,4): Reverb Time
+            RpnSelection::Nrpn(0, 4) => {
+                self.effects.set_reverb_time(cc_to_u8(value));
+            }
+            // NRPN(0,5): Chorus Mod Rate
+            RpnSelection::Nrpn(0, 5) => {
+                self.effects.set_chorus_mod_rate(cc_to_u8(value));
+            }
+            // NRPN(0,6): Chorus Mod Depth
+            RpnSelection::Nrpn(0, 6) => {
+                self.effects.set_chorus_mod_depth(cc_to_u8(value));
+            }
+            // NRPN(0,7): Chorus Feedback
+            RpnSelection::Nrpn(0, 7) => {
+                self.effects.set_chorus_feedback(cc_to_u8(value));
+            }
+            // NRPN(0,8): Chorus Send To Reverb
+            RpnSelection::Nrpn(0, 8) => {
+                self.effects.set_chorus_send_to_reverb(cc_to_u8(value));
             }
             _ => {}
         }
@@ -218,6 +250,7 @@ impl Plugin for Wms1Plugin {
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
         self.engine = Wms1Engine::new(self.sample_rate);
+        self.effects = MasterEffects::new(self.sample_rate);
         let num_out = audio_io_layout
             .main_output_channels
             .map(|n| n.get() as usize)
@@ -231,6 +264,7 @@ impl Plugin for Wms1Plugin {
     fn reset(&mut self) {
         self.note_channels.clear();
         self.engine = Wms1Engine::new(self.sample_rate);
+        self.effects = MasterEffects::new(self.sample_rate);
         self.lfo_state = PerformanceLfoState::default();
         self.rpn_msb = 0;
         self.rpn_lsb = 0;
@@ -282,7 +316,10 @@ impl Plugin for Wms1Plugin {
                     99  => { self.nrpn_msb = cc_to_u7(value); self.update_rpn_selection(true); }
                     100 => { self.rpn_lsb  = cc_to_u7(value); self.update_rpn_selection(false); }
                     101 => { self.rpn_msb  = cc_to_u7(value); self.update_rpn_selection(false); }
-                    6   => self.handle_data_entry(cc_to_u7(value)),
+                    6   => self.handle_data_entry(value),
+                    // マスターエフェクトセンドレベル
+                    91 => self.effects.set_reverb_send(cc_to_u8(value)),
+                    93 => self.effects.set_chorus_send(cc_to_u8(value)),
                     _ => {}
                 },
                 _ => {}
@@ -300,6 +337,7 @@ impl Plugin for Wms1Plugin {
         let buf = &mut self.render_buffer[..interleaved_len];
         buf.fill(0.0);
         self.engine.render(buf, num_channels);
+        self.effects.process(buf, num_channels);
 
         // インターリーブ → nih-plugのチャンネル分離レイアウトに変換
         let output_slices = buffer.as_slice();
