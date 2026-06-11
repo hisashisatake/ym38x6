@@ -7,6 +7,13 @@ pub use lfo::{LfoWaveform, PerformanceLfo, LfoDestination, PerformanceLfoTarget,
     pitch_depth_cents, volume_depth};
 
 // ---------------------------------------------------------------------------
+// Master effects (Reverb / Chorus)
+// ---------------------------------------------------------------------------
+
+pub mod effects;
+pub use effects::{ChorusType, MasterEffects, ReverbType};
+
+// ---------------------------------------------------------------------------
 // Wave table format (ymfm-compatible log encoding)
 // ---------------------------------------------------------------------------
 
