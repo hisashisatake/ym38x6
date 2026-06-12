@@ -1,6 +1,7 @@
 use nih_plug::prelude::*;
+use std::collections::HashMap;
 use std::sync::Arc;
-use ym38x6_core::{SoundEngine, Ym38x6Engine};
+use ym38x6_core::{ChannelParams, OperatorParams, SoundEngine, Ym38x6Engine, Ym38x6Patch};
 
 /// マスター単位5パラメーターのデフォルト値（wms1-vstと同じ値、`MasterEffects::new()`の内部初期値と一致）
 const DEFAULT_REVERB_TIME: u8 = 128;
@@ -12,8 +13,15 @@ const DEFAULT_CHORUS_SEND_TO_REVERB: u8 = 0;
 struct Ym38x6Plugin {
     params: Arc<Ym38x6Params>,
     engine: Ym38x6Engine,
+    note_channels: HashMap<u8, usize>, // MIDIノート番号 → エンジンチャンネルID
     render_buffer: Vec<f32>, // プロセスコールバック用インターリーブ作業バッファ
     sample_rate: f32,
+    // NRPN専用パラメーター（DAWオートメーション非公開、3.3.4でNRPN(0,9)〜(0,15)から配線）。
+    // デフォルト値はChannelParams::default()/OperatorParams::default()に合わせる。
+    algorithm: u8,
+    filter_type: u8,
+    filter_self_oscillation: bool,
+    operator_waveforms: [u8; 4],
 }
 
 /// オペレーター単位パラメーター一式（11個）。`Ym38x6Params`側で`[OperatorVstParams; 4]`として
@@ -162,9 +170,60 @@ impl Default for Ym38x6Plugin {
         Self {
             params: Arc::new(Ym38x6Params::default()),
             engine: Ym38x6Engine::new(DEFAULT_SR),
+            note_channels: HashMap::new(),
             render_buffer: Vec::new(),
             sample_rate: DEFAULT_SR,
+            algorithm: 0,
+            filter_type: 0,
+            filter_self_oscillation: true,
+            operator_waveforms: [0; 4],
         }
+    }
+}
+
+impl Ym38x6Plugin {
+    /// 現在のDAWパラメーターとNRPN専用状態から`Ym38x6Patch`を構築する。
+    fn build_patch(&self) -> Ym38x6Patch {
+        let p = &self.params;
+        let operators = std::array::from_fn(|i| {
+            let op = &p.operators[i];
+            OperatorParams {
+                tl: op.tl.value() as u8,
+                ar: op.ar.value() as u8,
+                d1r: op.d1r.value() as u8,
+                d2r: op.d2r.value() as u8,
+                d1l: op.d1l.value() as u8,
+                rr: op.rr.value() as u8,
+                mul: op.mul.value() as u8,
+                dt1: op.dt1.value() as u8,
+                ksr: op.ksr.value() as u8,
+                am_enable: op.ame.value(),
+                velocity_sensitivity: op.vel_sens.value() as u8,
+                waveform: self.operator_waveforms[i],
+            }
+        });
+
+        let channel = ChannelParams {
+            algorithm: self.algorithm,
+            feedback: p.feedback.value() as u8,
+            tone_lfo_freq: p.tone_freq.value() as u8,
+            tone_lfo_pmd: p.tone_pmd.value() as u8,
+            tone_lfo_amd: p.tone_amd.value() as u8,
+            tone_lfo_delay: p.tone_delay.value() as u8,
+            pms: p.pms.value() as u8,
+            ams: p.ams.value() as u8,
+            filter_cutoff: p.cutoff.value() as u8,
+            filter_resonance: p.resonance.value() as u8,
+            filter_type: self.filter_type,
+            filter_self_oscillation: self.filter_self_oscillation,
+            filter_eg_attack: p.feg_a.value() as u8,
+            filter_eg_decay: p.feg_d.value() as u8,
+            filter_eg_sustain: p.feg_s.value() as u8,
+            filter_eg_release: p.feg_r.value() as u8,
+            filter_eg_depth: p.feg_depth.value() as u8,
+        };
+
+        Ym38x6Patch { operators, channel }
     }
 }
 
@@ -210,6 +269,7 @@ impl Plugin for Ym38x6Plugin {
     }
 
     fn reset(&mut self) {
+        self.note_channels.clear();
         self.engine = Ym38x6Engine::new(self.sample_rate);
     }
 
@@ -217,8 +277,42 @@ impl Plugin for Ym38x6Plugin {
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
-        _context: &mut impl ProcessContext<Self>,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        let patch = self.build_patch();
+        self.engine.set_patch(patch);
+
+        // 発音中チャンネルへDAWオートメーションの変更を反映する
+        for &ch_id in self.note_channels.values() {
+            self.engine.set_channel_params(ch_id, patch.channel);
+            for (op_index, op) in patch.operators.iter().enumerate() {
+                self.engine.set_operator_params(ch_id, op_index, *op);
+            }
+        }
+
+        while let Some(event) = context.next_event() {
+            match event {
+                NoteEvent::NoteOn { note, velocity, .. } if velocity > 0.0 => {
+                    // 同じキーが押しっぱなしの場合は旧チャンネルをリリース
+                    if let Some(&old_id) = self.note_channels.get(&note) {
+                        self.engine.note_off(old_id);
+                    }
+                    let freq = 440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0);
+                    let velocity_u8 = (velocity * 127.0).round() as u8;
+                    let ch_id = self.engine.note_on_with_velocity(freq, velocity_u8, patch);
+                    self.note_channels.insert(note, ch_id);
+                }
+                NoteEvent::NoteOn { note, .. } | NoteEvent::NoteOff { note, .. } => {
+                    // velocity=0 の NoteOn も NoteOff として扱う（MIDI仕様）
+                    if let Some(&ch_id) = self.note_channels.get(&note) {
+                        self.engine.note_off(ch_id);
+                        self.note_channels.remove(&note);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         let num_channels = buffer.channels();
         let num_samples = buffer.samples();
         let interleaved_len = num_samples * num_channels;
