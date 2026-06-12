@@ -262,7 +262,7 @@ FM合成出力にかけるアナログシンセ的なVCF相当。OPQ由来パラ
 
 **Filter EGの加算モデル：**
 ```
-実効Cutoff = clamp(Cutoffベース値 + Filter EG出力 × Filter EG Depth / 255, 0, 255)
+実効Cutoff = clamp(Cutoffベース値 + Filter EG出力 × Filter EG Depth, 0, 255)
 ```
 キーオンでA→D→Sの順に推移し、キーオフでRに移行する（オペレーターのエンベロープと同様の挙動、MC-404等のフィルターエンベロープ相当）。
 

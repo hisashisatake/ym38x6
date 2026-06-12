@@ -1,4 +1,5 @@
 pub mod algorithm;
+pub mod filter;
 pub mod mapping;
 pub mod operator;
 pub mod tone_lfo;
@@ -7,6 +8,7 @@ pub mod waveform;
 use std::collections::HashMap;
 
 use algorithm::ALGORITHMS;
+use filter::{cutoff_to_hz, effective_cutoff, FilterEnvelope, FilterType, Svf};
 use mapping::{feedback_to_scale, frequency_to_note, FM_MODULATION_INDEX_SCALE};
 use operator::{Operator, OperatorParams};
 use sound_core::{
@@ -24,24 +26,68 @@ pub use sound_core::{
 // パッチ（チャンネル + オペレーター4個分のパラメーター一式）
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct ChannelParams {
     /// アルゴリズム番号(0〜7)。
     pub algorithm: u8,
     /// フィードバック深さ(0〜255)。
     pub feedback: u8,
-    /// 音色LFO周波数（3.1.5で使用）。
+    /// 音色LFO周波数。
     pub tone_lfo_freq: u8,
-    /// 音色LFO ピッチ変調深さ（3.1.5で使用）。
+    /// 音色LFO ピッチ変調深さ。
     pub tone_lfo_pmd: u8,
-    /// 音色LFO 振幅変調深さ（3.1.5で使用）。
+    /// 音色LFO 振幅変調深さ。
     pub tone_lfo_amd: u8,
-    /// 音色LFO Delay（3.1.5で使用）。
+    /// 音色LFO Delay。
     pub tone_lfo_delay: u8,
-    /// PM感度（音色LFOのピッチ変調感度、3.1.5で使用）。
+    /// PM感度（音色LFOのピッチ変調感度）。
     pub pms: u8,
-    /// AM感度（音色LFOの振幅変調感度、3.1.5で使用）。
+    /// AM感度（音色LFOの振幅変調感度）。
     pub ams: u8,
+    /// フィルターCutoff(0〜255、spec.md「フィルター」セクション参照)。
+    pub filter_cutoff: u8,
+    /// フィルターResonance(0〜255)。
+    pub filter_resonance: u8,
+    /// フィルタータイプ(0=LP/1=HP/2=BP)。
+    pub filter_type: u8,
+    /// Self-Oscillation有効フラグ。
+    pub filter_self_oscillation: bool,
+    /// Filter EG Attack(0〜255)。
+    pub filter_eg_attack: u8,
+    /// Filter EG Decay(0〜255)。
+    pub filter_eg_decay: u8,
+    /// Filter EG Sustain(0〜255)。
+    pub filter_eg_sustain: u8,
+    /// Filter EG Release(0〜255)。
+    pub filter_eg_release: u8,
+    /// Filter EGがCutoffに与える変調量(0〜255)。
+    pub filter_eg_depth: u8,
+}
+
+impl Default for ChannelParams {
+    /// filter_cutoff=255（フィルター全開）/ filter_self_oscillation=true（spec.md準拠）以外は
+    /// すべて0（音色LFO・Filter EGとも無効、アルゴリズム0）。
+    fn default() -> Self {
+        Self {
+            algorithm: 0,
+            feedback: 0,
+            tone_lfo_freq: 0,
+            tone_lfo_pmd: 0,
+            tone_lfo_amd: 0,
+            tone_lfo_delay: 0,
+            pms: 0,
+            ams: 0,
+            filter_cutoff: 255,
+            filter_resonance: 0,
+            filter_type: 0,
+            filter_self_oscillation: true,
+            filter_eg_attack: 0,
+            filter_eg_decay: 0,
+            filter_eg_sustain: 0,
+            filter_eg_release: 0,
+            filter_eg_depth: 0,
+        }
+    }
 }
 
 /// 4op分のオペレーターパラメーター + チャンネルパラメーターの一式。
@@ -85,6 +131,10 @@ struct Channel {
     tl_carrier_mod_delta: f32,
     /// 音色LFO本体（PMS/AMS×PMD/AMD、spec.md「音色LFO」セクション参照）。
     tone_lfo: ToneLfo,
+    /// 4op合成後に適用するSVFフィルター（spec.md「フィルター」セクション参照）。
+    svf: Svf,
+    /// フィルターCutoffを変調するFilter EG。
+    filter_eg: FilterEnvelope,
 }
 
 impl Channel {
@@ -95,6 +145,8 @@ impl Channel {
             op.note_on(frequency, velocity);
             op
         });
+        let mut filter_eg = FilterEnvelope::new();
+        filter_eg.note_on();
         Self {
             operators,
             channel_params: patch.channel,
@@ -107,6 +159,8 @@ impl Channel {
             volume_mod_delta: 0.0,
             tl_carrier_mod_delta: 0.0,
             tone_lfo: ToneLfo::new(),
+            svf: Svf::new(),
+            filter_eg,
         }
     }
 
@@ -129,6 +183,7 @@ impl Channel {
         for op in self.operators.iter_mut() {
             op.note_off();
         }
+        self.filter_eg.note_off();
     }
 
     fn is_idle(&self) -> bool {
@@ -199,7 +254,31 @@ impl Channel {
         let carrier_sum: f32 = algo.carriers.iter().map(|&i| op_outputs[i]).sum();
         let tl_carrier_gain = (1.0 + self.tl_carrier_mod_delta).max(0.0);
         let volume_gain = (1.0 + self.volume_mod_delta).max(0.0);
-        carrier_sum * tl_carrier_gain * volume_gain
+        let dry = carrier_sum * tl_carrier_gain * volume_gain;
+
+        // SVFフィルター + Filter EG（4op合成後）
+        let filter_eg_level = self.filter_eg.tick(
+            sample_rate,
+            self.channel_params.filter_eg_attack,
+            self.channel_params.filter_eg_decay,
+            self.channel_params.filter_eg_sustain,
+            self.channel_params.filter_eg_release,
+        );
+        let cutoff = effective_cutoff(
+            self.channel_params.filter_cutoff,
+            filter_eg_level,
+            self.channel_params.filter_eg_depth,
+        );
+        let cutoff_hz = cutoff_to_hz(cutoff);
+        let filter_type = FilterType::from_u8(self.channel_params.filter_type);
+        self.svf.process(
+            dry,
+            sample_rate,
+            cutoff_hz,
+            self.channel_params.filter_resonance,
+            self.channel_params.filter_self_oscillation,
+            filter_type,
+        )
     }
 }
 
@@ -430,6 +509,53 @@ mod tests {
 
             for &s in buf.iter().chain(buf2.iter()) {
                 assert!(s.is_finite(), "algorithm {algorithm}: non-finite sample {s}");
+            }
+        }
+    }
+
+    #[test]
+    fn filter_self_oscillation_long_run_no_nan() {
+        let op_params = OperatorParams {
+            tl: 200,
+            ar: 255,
+            d1r: 100,
+            d2r: 80,
+            d1l: 180,
+            rr: 150,
+            mul: 16,
+            dt1: 128,
+            ksr: 64,
+            am_enable: false,
+            velocity_sensitivity: 0,
+            waveform: 0,
+        };
+
+        for filter_type in 0u8..3 {
+            let mut patch = Ym38x6Patch::default();
+            patch.operators = [op_params; 4];
+            patch.channel.algorithm = 7;
+            patch.channel.filter_type = filter_type;
+            patch.channel.filter_cutoff = 64;
+            patch.channel.filter_resonance = 255;
+            patch.channel.filter_self_oscillation = true;
+            patch.channel.filter_eg_attack = 200;
+            patch.channel.filter_eg_decay = 150;
+            patch.channel.filter_eg_sustain = 128;
+            patch.channel.filter_eg_release = 150;
+            patch.channel.filter_eg_depth = 255;
+
+            let mut engine = Ym38x6Engine::new(44100.0);
+            let ch = engine.note_on_with_velocity(440.0, 100, patch);
+
+            let mut buf = vec![0.0f32; 44100];
+            engine.render(&mut buf, 1);
+            engine.note_off(ch);
+
+            let mut buf2 = vec![0.0f32; 44100 * 2];
+            engine.render(&mut buf2, 1);
+
+            for &s in buf.iter().chain(buf2.iter()) {
+                assert!(s.is_finite(), "filter_type {filter_type}: non-finite sample {s}");
             }
         }
     }
