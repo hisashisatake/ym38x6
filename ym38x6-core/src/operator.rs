@@ -45,6 +45,8 @@ pub struct Operator {
     tone_lfo_pitch_mod_cents: f32,
     /// 音色LFOによる振幅変調（0.0〜1.0、am_enable時のみ非ゼロ、3.1.5でChannelが設定）
     tone_lfo_amp_mod: f32,
+    /// パフォーマンスLFO（ビブラート）によるピッチ変調（セント、全Op共通、Channelが毎サンプル設定）
+    perf_lfo_pitch_mod_cents: f32,
 }
 
 impl Operator {
@@ -58,6 +60,7 @@ impl Operator {
             velocity: 127,
             tone_lfo_pitch_mod_cents: 0.0,
             tone_lfo_amp_mod: 0.0,
+            perf_lfo_pitch_mod_cents: 0.0,
         }
     }
 
@@ -85,8 +88,13 @@ impl Operator {
         self.tone_lfo_amp_mod = amp_mod;
     }
 
+    /// パフォーマンスLFO（ビブラート）によるピッチ変調を設定する（毎サンプル、Channelから呼ばれる）。
+    pub fn set_pitch_modulation(&mut self, cents: f32) {
+        self.perf_lfo_pitch_mod_cents = cents;
+    }
+
     fn effective_frequency(&self) -> f32 {
-        let cents = dt1_to_cents(self.params.dt1) + self.tone_lfo_pitch_mod_cents;
+        let cents = dt1_to_cents(self.params.dt1) + self.tone_lfo_pitch_mod_cents + self.perf_lfo_pitch_mod_cents;
         self.frequency * mul_to_ratio(self.params.mul) * 2f32.powf(cents / 1200.0)
     }
 
