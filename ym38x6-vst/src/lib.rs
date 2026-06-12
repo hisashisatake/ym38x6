@@ -406,6 +406,31 @@ impl Ym38x6Plugin {
             RpnSelection::Nrpn(0, 8) => {
                 self.effects.set_chorus_send_to_reverb(cc_to_u8(value));
             }
+            // NRPN(0,9): Algorithm（0〜7、範囲外は7にclamp）
+            RpnSelection::Nrpn(0, 9) => {
+                self.algorithm = cc_to_u7(value).min(7);
+            }
+            // NRPN(0,10)〜(0,13): Waveform Op0〜3（0〜255）
+            RpnSelection::Nrpn(0, 10) => {
+                self.operator_waveforms[0] = cc_to_u8(value);
+            }
+            RpnSelection::Nrpn(0, 11) => {
+                self.operator_waveforms[1] = cc_to_u8(value);
+            }
+            RpnSelection::Nrpn(0, 12) => {
+                self.operator_waveforms[2] = cc_to_u8(value);
+            }
+            RpnSelection::Nrpn(0, 13) => {
+                self.operator_waveforms[3] = cc_to_u8(value);
+            }
+            // NRPN(0,14): Filter Type（0=LP/1=HP/2=BP、範囲外は2にclamp）
+            RpnSelection::Nrpn(0, 14) => {
+                self.filter_type = cc_to_u7(value).min(2);
+            }
+            // NRPN(0,15): Filter Self-Oscillation（0=OFF/1=ON）
+            RpnSelection::Nrpn(0, 15) => {
+                self.filter_self_oscillation = cc_to_u7(value) != 0;
+            }
             _ => {}
         }
     }

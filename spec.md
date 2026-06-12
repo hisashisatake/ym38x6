@@ -569,6 +569,10 @@ NRPN番号は本実装（パフォーマンスLFO）で初めて定義する。M
 | Chorus Mod Depth | 0, 6 | 0〜255 |
 | Chorus Feedback | 0, 7 | 0〜255 |
 | Chorus Send To Reverb | 0, 8 | 0〜255 |
+| Algorithm | 0, 9 | 0〜7 |
+| Waveform Op0〜3 | 0, 10〜13 | 0〜255（0〜7=ビルトイン、8〜255=ユーザー波形スロット） |
+| Filter Type | 0, 14 | 0=LP / 1=HP / 2=BP |
+| Filter Self-Oscillation | 0, 15 | 0=OFF / 1=ON |
 
 **AT Destination / Poly AT Destination（アフタータッチの加算先）：**
 
