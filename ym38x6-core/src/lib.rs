@@ -21,7 +21,8 @@ use waveform::gen_builtin_waveform;
 
 // 呼び出し側がsound-coreに直接依存しなくて済むようre-export
 pub use sound_core::{
-    pitch_depth_cents, volume_depth, AdsrParams, LfoDestination, LfoWaveform, SoundEngine,
+    pitch_depth_cents, volume_depth, AdsrParams, ChorusType, LfoDestination, LfoWaveform,
+    MasterEffects, ReverbType, SoundEngine,
 };
 
 // ---------------------------------------------------------------------------

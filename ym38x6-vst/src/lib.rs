@@ -1,7 +1,10 @@
 use nih_plug::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use ym38x6_core::{ChannelParams, OperatorParams, SoundEngine, Ym38x6Engine, Ym38x6Patch};
+use ym38x6_core::{
+    pitch_depth_cents, volume_depth, ChannelParams, ChorusType, LfoWaveform, MasterEffects,
+    OperatorParams, ReverbType, SoundEngine, Ym38x6Engine, Ym38x6LfoDestination, Ym38x6Patch,
+};
 
 /// マスター単位5パラメーターのデフォルト値（wms1-vstと同じ値、`MasterEffects::new()`の内部初期値と一致）
 const DEFAULT_REVERB_TIME: u8 = 128;
@@ -10,9 +13,30 @@ const DEFAULT_CHORUS_MOD_DEPTH: u8 = 128;
 const DEFAULT_CHORUS_FEEDBACK: u8 = 0;
 const DEFAULT_CHORUS_SEND_TO_REVERB: u8 = 0;
 
+/// MIDI CC値（0.0〜1.0正規化）を本プロジェクトの内部表現（0〜255）に変換
+fn cc_to_u8(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// MIDI CC値（0.0〜1.0正規化）をGM2準拠の7bit値（0〜127）に変換
+fn cc_to_u7(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 127.0).round() as u8
+}
+
+/// CC99/98(NRPN)・CC101/100(RPN) で選択中のパラメーター番号。
+/// CC6(Data Entry MSB)はこの選択状態に応じて値を適用する。
+#[derive(Clone, Copy, PartialEq, Default)]
+enum RpnSelection {
+    #[default]
+    None,
+    Rpn(u8, u8),
+    Nrpn(u8, u8),
+}
+
 struct Ym38x6Plugin {
     params: Arc<Ym38x6Params>,
     engine: Ym38x6Engine,
+    effects: MasterEffects,
     note_channels: HashMap<u8, usize>, // MIDIノート番号 → エンジンチャンネルID
     render_buffer: Vec<f32>, // プロセスコールバック用インターリーブ作業バッファ
     sample_rate: f32,
@@ -22,6 +46,41 @@ struct Ym38x6Plugin {
     filter_type: u8,
     filter_self_oscillation: bool,
     operator_waveforms: [u8; 4],
+
+    // パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN(0,0)/(0,1)）の状態
+    lfo_cc1: u8,    // CC1 Modulation Wheel（Depth加算分）
+    lfo_rpn0_5: u8, // RPN0,5 Modulation Depth Range（GM2準拠 0〜127、デフォルト64）
+    lfo_destination: Ym38x6LfoDestination, // NRPN(0,0)
+    lfo_waveform: LfoWaveform,             // NRPN(0,1)
+    // lfo_rate/lfo_depth/lfo_delayはDAWパラメーターとCC76/77/78の両方から設定され得るため、
+    // 2シャドウ方式で管理する（last_*_param: DAW側差分検知用、effective_*:
+    // apply_performance_lfoへ実際に渡す値。CC受信時はlast_*_paramを更新せず
+    // effective_*のみ書き換えることで、次ブロックのDAW差分検知に上書きされないようにする）。
+    last_lfo_rate_param: u8,
+    effective_lfo_rate: u8,
+    last_lfo_depth_param: u8,
+    effective_lfo_depth: u8,
+    last_lfo_delay_param: u8,
+    effective_lfo_delay: u8,
+
+    // Reverb/Chorus Send：DAWパラメーターとCC91/93の両方から設定され得るため、
+    // マスターエフェクト5パラメーターと同じ1シャドウ差分検知方式で管理する。
+    last_rev_send: u8,
+    last_cho_send: u8,
+
+    // RPN/NRPN選択状態
+    rpn_msb: u8,
+    rpn_lsb: u8,
+    nrpn_msb: u8,
+    nrpn_lsb: u8,
+    rpn_selection: RpnSelection,
+
+    // マスター単位5パラメーターの「前回ブロックで適用したnih-plug値」（1シャドウ差分検知方式）
+    last_reverb_time: u8,
+    last_chorus_mod_rate: u8,
+    last_chorus_mod_depth: u8,
+    last_chorus_feedback: u8,
+    last_chorus_send_to_reverb: u8,
 }
 
 /// オペレーター単位パラメーター一式（11個）。`Ym38x6Params`側で`[OperatorVstParams; 4]`として
@@ -170,6 +229,7 @@ impl Default for Ym38x6Plugin {
         Self {
             params: Arc::new(Ym38x6Params::default()),
             engine: Ym38x6Engine::new(DEFAULT_SR),
+            effects: MasterEffects::new(DEFAULT_SR),
             note_channels: HashMap::new(),
             render_buffer: Vec::new(),
             sample_rate: DEFAULT_SR,
@@ -177,6 +237,28 @@ impl Default for Ym38x6Plugin {
             filter_type: 0,
             filter_self_oscillation: true,
             operator_waveforms: [0; 4],
+            lfo_cc1: 0,
+            lfo_rpn0_5: 64,
+            lfo_destination: Ym38x6LfoDestination::Pitch,
+            lfo_waveform: LfoWaveform::Triangle,
+            last_lfo_rate_param: 0,
+            effective_lfo_rate: 0,
+            last_lfo_depth_param: 0,
+            effective_lfo_depth: 0,
+            last_lfo_delay_param: 0,
+            effective_lfo_delay: 0,
+            last_rev_send: 0,
+            last_cho_send: 0,
+            rpn_msb: 0,
+            rpn_lsb: 0,
+            nrpn_msb: 0,
+            nrpn_lsb: 0,
+            rpn_selection: RpnSelection::default(),
+            last_reverb_time: DEFAULT_REVERB_TIME,
+            last_chorus_mod_rate: DEFAULT_CHORUS_MOD_RATE,
+            last_chorus_mod_depth: DEFAULT_CHORUS_MOD_DEPTH,
+            last_chorus_feedback: DEFAULT_CHORUS_FEEDBACK,
+            last_chorus_send_to_reverb: DEFAULT_CHORUS_SEND_TO_REVERB,
         }
     }
 }
@@ -225,6 +307,108 @@ impl Ym38x6Plugin {
 
         Ym38x6Patch { operators, channel }
     }
+
+    /// 指定チャンネルへ現在のパフォーマンスLFO設定を適用する
+    fn apply_performance_lfo(&mut self, channel: usize) {
+        let depth = match self.lfo_destination {
+            Ym38x6LfoDestination::Pitch => {
+                pitch_depth_cents(self.effective_lfo_depth, self.lfo_cc1, self.lfo_rpn0_5)
+            }
+            Ym38x6LfoDestination::Volume | Ym38x6LfoDestination::TlCarrier => {
+                volume_depth(self.effective_lfo_depth, self.lfo_cc1)
+            }
+        };
+        self.engine.set_performance_lfo(
+            channel,
+            self.effective_lfo_rate,
+            self.effective_lfo_delay,
+            self.lfo_waveform,
+            self.lfo_destination,
+            depth,
+        );
+    }
+
+    /// 発音中の全チャンネルへ現在のパフォーマンスLFO設定を再適用する
+    fn apply_performance_lfo_to_active(&mut self) {
+        let channels: Vec<usize> = self.note_channels.values().copied().collect();
+        for ch in channels {
+            self.apply_performance_lfo(ch);
+        }
+    }
+
+    /// CC99/98(NRPN)・CC101/100(RPN)受信時に選択状態を更新する。
+    /// MSB,LSB=127,127（Null）の場合は選択解除する
+    fn update_rpn_selection(&mut self, is_nrpn: bool) {
+        let (msb, lsb) = if is_nrpn { (self.nrpn_msb, self.nrpn_lsb) } else { (self.rpn_msb, self.rpn_lsb) };
+        self.rpn_selection = if msb == 127 && lsb == 127 {
+            RpnSelection::None
+        } else if is_nrpn {
+            RpnSelection::Nrpn(msb, lsb)
+        } else {
+            RpnSelection::Rpn(msb, lsb)
+        };
+    }
+
+    /// CC6(Data Entry MSB)受信時、選択中のRPN/NRPNに応じて値を適用する。
+    /// `value`はCC値の正規化値（0.0〜1.0）。enum系パラメーターは`cc_to_u7`、
+    /// 0〜255連続値パラメーターは`cc_to_u8`で変換する
+    fn handle_data_entry(&mut self, value: f32) {
+        match self.rpn_selection {
+            // RPN0,5: Modulation Depth Range
+            RpnSelection::Rpn(0, 5) => {
+                self.lfo_rpn0_5 = cc_to_u7(value);
+                self.apply_performance_lfo_to_active();
+            }
+            // NRPN(0,0): Performance LFO Destination（38x6拡張：2=TLキャリア一括）
+            RpnSelection::Nrpn(0, 0) => {
+                self.lfo_destination = match cc_to_u7(value) {
+                    0 => Ym38x6LfoDestination::Pitch,
+                    1 => Ym38x6LfoDestination::Volume,
+                    _ => Ym38x6LfoDestination::TlCarrier,
+                };
+                self.apply_performance_lfo_to_active();
+            }
+            // NRPN(0,1): Performance LFO Waveform
+            RpnSelection::Nrpn(0, 1) => {
+                self.lfo_waveform = match cc_to_u7(value) {
+                    1 => LfoWaveform::Sine,
+                    2 => LfoWaveform::Square,
+                    3 => LfoWaveform::SampleHold,
+                    _ => LfoWaveform::Triangle,
+                };
+                self.apply_performance_lfo_to_active();
+            }
+            // NRPN(0,2): Reverb Type
+            RpnSelection::Nrpn(0, 2) => {
+                self.effects.set_reverb_type(ReverbType::from_u8(cc_to_u7(value)));
+            }
+            // NRPN(0,3): Chorus Type
+            RpnSelection::Nrpn(0, 3) => {
+                self.effects.set_chorus_type(ChorusType::from_u8(cc_to_u7(value)));
+            }
+            // NRPN(0,4): Reverb Time
+            RpnSelection::Nrpn(0, 4) => {
+                self.effects.set_reverb_time(cc_to_u8(value));
+            }
+            // NRPN(0,5): Chorus Mod Rate
+            RpnSelection::Nrpn(0, 5) => {
+                self.effects.set_chorus_mod_rate(cc_to_u8(value));
+            }
+            // NRPN(0,6): Chorus Mod Depth
+            RpnSelection::Nrpn(0, 6) => {
+                self.effects.set_chorus_mod_depth(cc_to_u8(value));
+            }
+            // NRPN(0,7): Chorus Feedback
+            RpnSelection::Nrpn(0, 7) => {
+                self.effects.set_chorus_feedback(cc_to_u8(value));
+            }
+            // NRPN(0,8): Chorus Send To Reverb
+            RpnSelection::Nrpn(0, 8) => {
+                self.effects.set_chorus_send_to_reverb(cc_to_u8(value));
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Plugin for Ym38x6Plugin {
@@ -258,6 +442,7 @@ impl Plugin for Ym38x6Plugin {
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
         self.engine = Ym38x6Engine::new(self.sample_rate);
+        self.effects = MasterEffects::new(self.sample_rate);
         let num_out = audio_io_layout
             .main_output_channels
             .map(|n| n.get() as usize)
@@ -271,6 +456,29 @@ impl Plugin for Ym38x6Plugin {
     fn reset(&mut self) {
         self.note_channels.clear();
         self.engine = Ym38x6Engine::new(self.sample_rate);
+        self.effects = MasterEffects::new(self.sample_rate);
+        self.lfo_cc1 = 0;
+        self.lfo_rpn0_5 = 64;
+        self.lfo_destination = Ym38x6LfoDestination::Pitch;
+        self.lfo_waveform = LfoWaveform::Triangle;
+        self.last_lfo_rate_param = 0;
+        self.effective_lfo_rate = 0;
+        self.last_lfo_depth_param = 0;
+        self.effective_lfo_depth = 0;
+        self.last_lfo_delay_param = 0;
+        self.effective_lfo_delay = 0;
+        self.last_rev_send = 0;
+        self.last_cho_send = 0;
+        self.rpn_msb = 0;
+        self.rpn_lsb = 0;
+        self.nrpn_msb = 0;
+        self.nrpn_lsb = 0;
+        self.rpn_selection = RpnSelection::default();
+        self.last_reverb_time = DEFAULT_REVERB_TIME;
+        self.last_chorus_mod_rate = DEFAULT_CHORUS_MOD_RATE;
+        self.last_chorus_mod_depth = DEFAULT_CHORUS_MOD_DEPTH;
+        self.last_chorus_feedback = DEFAULT_CHORUS_FEEDBACK;
+        self.last_chorus_send_to_reverb = DEFAULT_CHORUS_SEND_TO_REVERB;
     }
 
     fn process(
@@ -290,6 +498,69 @@ impl Plugin for Ym38x6Plugin {
             }
         }
 
+        // パフォーマンスLFO Rate/Depth/Delay：DAWパラメーターとCC76/77/78の両方から
+        // 設定され得るため、2シャドウ方式で差分検知する。
+        let lfo_rate_param = self.params.lfo_rate.value() as u8;
+        if lfo_rate_param != self.last_lfo_rate_param {
+            self.last_lfo_rate_param = lfo_rate_param;
+            self.effective_lfo_rate = lfo_rate_param;
+            self.apply_performance_lfo_to_active();
+        }
+        let lfo_depth_param = self.params.lfo_depth.value() as u8;
+        if lfo_depth_param != self.last_lfo_depth_param {
+            self.last_lfo_depth_param = lfo_depth_param;
+            self.effective_lfo_depth = lfo_depth_param;
+            self.apply_performance_lfo_to_active();
+        }
+        let lfo_delay_param = self.params.lfo_delay.value() as u8;
+        if lfo_delay_param != self.last_lfo_delay_param {
+            self.last_lfo_delay_param = lfo_delay_param;
+            self.effective_lfo_delay = lfo_delay_param;
+            self.apply_performance_lfo_to_active();
+        }
+
+        // Reverb/Chorus Send：DAWパラメーターとCC91/93の両方から設定され得るため、
+        // マスターエフェクト5パラメーターと同じ1シャドウ差分検知方式で適用する。
+        let rev_send = self.params.rev_send.value() as u8;
+        if rev_send != self.last_rev_send {
+            self.effects.set_reverb_send(rev_send);
+            self.last_rev_send = rev_send;
+        }
+        let cho_send = self.params.cho_send.value() as u8;
+        if cho_send != self.last_cho_send {
+            self.effects.set_chorus_send(cho_send);
+            self.last_cho_send = cho_send;
+        }
+
+        // マスター単位5パラメーター：DAWオートメーションで値が変化した場合のみeffectsへ反映する。
+        // NRPN(0,4)〜(0,8)はeffectsへ直接書き込まれ、ここでの値が前回と同じ間は上書きされない
+        // （差分検知方式。NRPNの変更はnih-plug側のパラメーター表示には反映されない）。
+        let reverb_time = self.params.reverb_time.value() as u8;
+        if reverb_time != self.last_reverb_time {
+            self.effects.set_reverb_time(reverb_time);
+            self.last_reverb_time = reverb_time;
+        }
+        let chorus_mod_rate = self.params.chorus_mod_rate.value() as u8;
+        if chorus_mod_rate != self.last_chorus_mod_rate {
+            self.effects.set_chorus_mod_rate(chorus_mod_rate);
+            self.last_chorus_mod_rate = chorus_mod_rate;
+        }
+        let chorus_mod_depth = self.params.chorus_mod_depth.value() as u8;
+        if chorus_mod_depth != self.last_chorus_mod_depth {
+            self.effects.set_chorus_mod_depth(chorus_mod_depth);
+            self.last_chorus_mod_depth = chorus_mod_depth;
+        }
+        let chorus_feedback = self.params.chorus_feedback.value() as u8;
+        if chorus_feedback != self.last_chorus_feedback {
+            self.effects.set_chorus_feedback(chorus_feedback);
+            self.last_chorus_feedback = chorus_feedback;
+        }
+        let chorus_send_to_reverb = self.params.chorus_send_to_reverb.value() as u8;
+        if chorus_send_to_reverb != self.last_chorus_send_to_reverb {
+            self.effects.set_chorus_send_to_reverb(chorus_send_to_reverb);
+            self.last_chorus_send_to_reverb = chorus_send_to_reverb;
+        }
+
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } if velocity > 0.0 => {
@@ -301,6 +572,7 @@ impl Plugin for Ym38x6Plugin {
                     let velocity_u8 = (velocity * 127.0).round() as u8;
                     let ch_id = self.engine.note_on_with_velocity(freq, velocity_u8, patch);
                     self.note_channels.insert(note, ch_id);
+                    self.apply_performance_lfo(ch_id);
                 }
                 NoteEvent::NoteOn { note, .. } | NoteEvent::NoteOff { note, .. } => {
                     // velocity=0 の NoteOn も NoteOff として扱う（MIDI仕様）
@@ -309,6 +581,46 @@ impl Plugin for Ym38x6Plugin {
                         self.note_channels.remove(&note);
                     }
                 }
+                // パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN Destination/Waveform）・
+                // マスターエフェクトセンドレベル（CC91/93）
+                NoteEvent::MidiCC { cc, value, .. } => match cc {
+                    1 => {
+                        self.lfo_cc1 = cc_to_u8(value);
+                        self.apply_performance_lfo_to_active();
+                    }
+                    76 => {
+                        self.effective_lfo_rate = cc_to_u8(value);
+                        self.apply_performance_lfo_to_active();
+                    }
+                    77 => {
+                        self.effective_lfo_depth = cc_to_u8(value);
+                        self.apply_performance_lfo_to_active();
+                    }
+                    78 => {
+                        self.effective_lfo_delay = cc_to_u8(value);
+                        self.apply_performance_lfo_to_active();
+                    }
+                    98 => {
+                        self.nrpn_lsb = cc_to_u7(value);
+                        self.update_rpn_selection(true);
+                    }
+                    99 => {
+                        self.nrpn_msb = cc_to_u7(value);
+                        self.update_rpn_selection(true);
+                    }
+                    100 => {
+                        self.rpn_lsb = cc_to_u7(value);
+                        self.update_rpn_selection(false);
+                    }
+                    101 => {
+                        self.rpn_msb = cc_to_u7(value);
+                        self.update_rpn_selection(false);
+                    }
+                    6 => self.handle_data_entry(value),
+                    91 => self.effects.set_reverb_send(cc_to_u8(value)),
+                    93 => self.effects.set_chorus_send(cc_to_u8(value)),
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -324,6 +636,7 @@ impl Plugin for Ym38x6Plugin {
         let buf = &mut self.render_buffer[..interleaved_len];
         buf.fill(0.0);
         self.engine.render(buf, num_channels);
+        self.effects.process(buf, num_channels);
 
         // インターリーブ → nih-plugのチャンネル分離レイアウトに変換
         let output_slices = buffer.as_slice();
