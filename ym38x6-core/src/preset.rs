@@ -1,3 +1,7 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
+
 use crate::operator::OperatorParams;
 use crate::Ym38x6Patch;
 
@@ -36,6 +40,68 @@ pub fn placeholder_patch(bank: u16, program: u8) -> Ym38x6Patch {
     patch
 }
 
+/// 1音色分のプリセット（名前 + パッチ本体）。`.38x6`拡張子のJSONファイルとして
+/// 保存・読み込みする。現状は`Ym38x6Patch`のフィールドのみを保存する
+/// （拡張波形スロット(8〜255)データの埋め込みは、当該機能実装後にフォーマット拡張で対応）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Preset {
+    pub name: String,
+    pub patch: Ym38x6Patch,
+}
+
+impl Preset {
+    pub fn to_json(&self) -> serde_json::Result<String> {
+        serde_json::to_string_pretty(self)
+    }
+
+    pub fn from_json(json: &str) -> serde_json::Result<Self> {
+        serde_json::from_str(json)
+    }
+}
+
+/// ディレクトリから読み込んだ`.38x6`プリセット集合。ファイル名`b<bank>_p<program>.38x6`から
+/// バンク/プログラム番号を読み取り、Bank Select + Program Changeでのルックアップに使う
+/// （命名規則は暫定。本格的なプリセット管理UIができたら見直す）。
+#[derive(Clone, Debug, Default)]
+pub struct PresetBank {
+    presets: HashMap<(u16, u8), Preset>,
+}
+
+impl PresetBank {
+    /// 指定ディレクトリ内の`b<bank>_p<program>.38x6`ファイルを読み込む。
+    /// ディレクトリが存在しない・読めない場合は空の集合を返す
+    /// （ユーザープリセット未作成時はplaceholder_patchへフォールバックするため、エラーにしない）。
+    pub fn load_from_dir(dir: &Path) -> Self {
+        let mut presets = HashMap::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Self { presets };
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("38x6") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+            let Some((bank, program)) = parse_bank_program(stem) else { continue };
+            let Ok(json) = std::fs::read_to_string(&path) else { continue };
+            let Ok(preset) = Preset::from_json(&json) else { continue };
+            presets.insert((bank, program), preset);
+        }
+        Self { presets }
+    }
+
+    pub fn get(&self, bank: u16, program: u8) -> Option<&Preset> {
+        self.presets.get(&(bank, program))
+    }
+}
+
+/// `b<bank>_p<program>`形式のファイル名（拡張子除く）からbank/program番号を取り出す。
+fn parse_bank_program(stem: &str) -> Option<(u16, u8)> {
+    let rest = stem.strip_prefix('b')?;
+    let (bank_str, program_str) = rest.split_once("_p")?;
+    Some((bank_str.parse().ok()?, program_str.parse().ok()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +131,49 @@ mod tests {
             assert!(buf.iter().any(|&s| s != 0.0), "bank={bank} program={program} is silent");
             let _ = ch;
         }
+    }
+
+    #[test]
+    fn preset_json_round_trip() {
+        let preset = Preset { name: "Test Patch".to_string(), patch: placeholder_patch(1, 42) };
+        let json = preset.to_json().expect("serialize");
+        let loaded = Preset::from_json(&json).expect("deserialize");
+        assert_eq!(loaded.name, preset.name);
+        assert_eq!(loaded.patch, preset.patch);
+    }
+
+    #[test]
+    fn parse_bank_program_valid_and_invalid() {
+        assert_eq!(parse_bank_program("b1_p64"), Some((1, 64)));
+        assert_eq!(parse_bank_program("b0_p0"), Some((0, 0)));
+        assert_eq!(parse_bank_program("invalid"), None);
+        assert_eq!(parse_bank_program("b1"), None);
+        assert_eq!(parse_bank_program("b1_p300"), None); // programはu8範囲外
+        assert_eq!(parse_bank_program("bx_p64"), None);
+    }
+
+    #[test]
+    fn preset_bank_load_from_dir_reads_matching_files_and_ignores_others() {
+        let dir = std::env::temp_dir().join(format!("ym38x6_preset_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        let preset = Preset { name: "My Preset".to_string(), patch: placeholder_patch(1, 64) };
+        std::fs::write(dir.join("b1_p64.38x6"), preset.to_json().unwrap()).unwrap();
+        std::fs::write(dir.join("ignore.txt"), "not a preset").unwrap();
+
+        let bank = PresetBank::load_from_dir(&dir);
+        std::fs::remove_dir_all(&dir).expect("cleanup temp dir");
+
+        let loaded = bank.get(1, 64).expect("b1_p64 should be loaded");
+        assert_eq!(loaded.name, "My Preset");
+        assert_eq!(loaded.patch, preset.patch);
+        assert!(bank.get(0, 0).is_none());
+    }
+
+    #[test]
+    fn preset_bank_load_from_dir_missing_dir_returns_empty() {
+        let dir = std::env::temp_dir().join("ym38x6_preset_test_nonexistent_dir");
+        let bank = PresetBank::load_from_dir(&dir);
+        assert!(bank.get(0, 0).is_none());
     }
 }

@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 use crate::mapping::*;
+use serde::{Deserialize, Serialize};
 use sound_core::WaveTable;
 
 /// OPN系5段階エンベロープ（Attack→Decay1→Decay2→Release、+Idle）。
@@ -16,7 +17,7 @@ pub enum EnvPhase {
 }
 
 /// オペレーター単位パラメーター一式（全8bit、11個）。NRPN/DAWパラメーターから直接コピー可能。
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OperatorParams {
     pub tl: u8,
     pub ar: u8,

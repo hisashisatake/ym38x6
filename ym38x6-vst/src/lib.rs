@@ -1,13 +1,35 @@
 use nih_plug::prelude::*;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use ym38x6_core::algorithm::ALGORITHMS;
 use ym38x6_core::mapping::F_NUMBER_CENTER;
 use ym38x6_core::{
     pitch_depth_cents, placeholder_patch, volume_depth, ChannelParams, ChorusType, LfoWaveform,
-    MasterEffects, OperatorParams, ReverbType, SoundEngine, Ym38x6Engine, Ym38x6LfoDestination,
-    Ym38x6Patch,
+    MasterEffects, OperatorParams, PresetBank, ReverbType, SoundEngine, Ym38x6Engine,
+    Ym38x6LfoDestination, Ym38x6Patch,
 };
+
+/// ユーザープリセットの読み込み元ディレクトリ（暫定）。
+/// `%APPDATA%\ym38x6\presets`が存在すればそちらを使い、無ければExplorerで見つけやすい
+/// `%USERPROFILE%\Documents\ym38x6\presets`にフォールバックする。
+/// 本格的なプリセット管理UIができるまでの間の配置場所。
+fn presets_dir() -> PathBuf {
+    let appdata_dir = std::env::var("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("ym38x6")
+        .join("presets");
+    if appdata_dir.is_dir() {
+        return appdata_dir;
+    }
+    std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("Documents")
+        .join("ym38x6")
+        .join("presets")
+}
 
 /// マスター単位5パラメーターのデフォルト値（wms1-vstと同じ値、`MasterEffects::new()`の内部初期値と一致）
 const DEFAULT_REVERB_TIME: u8 = 128;
@@ -187,6 +209,9 @@ struct Ym38x6Plugin {
     bank_select_msb: u8,                 // CC0
     bank_select_lsb: u8,                 // CC32
     program_patch: Option<Ym38x6Patch>,  // Program Change受信後はbuild_patch()の代わりにこれを使う
+
+    // presets_dir()から読み込んだユーザープリセット集合（initialize()で読み込む）
+    preset_bank: PresetBank,
 }
 
 /// オペレーター単位パラメーター一式（11個）。`Ym38x6Params`側で`[OperatorVstParams; 4]`として
@@ -379,6 +404,7 @@ impl Default for Ym38x6Plugin {
             bank_select_msb: 0,
             bank_select_lsb: 0,
             program_patch: None,
+            preset_bank: PresetBank::default(),
         }
     }
 }
@@ -619,6 +645,7 @@ impl Plugin for Ym38x6Plugin {
         // プロセスコールバック内でアロケーションしないよう最大サイズで確保
         self.render_buffer
             .resize(buffer_config.max_buffer_size as usize * num_out, 0.0);
+        self.preset_bank = PresetBank::load_from_dir(&presets_dir());
         true
     }
 
@@ -792,7 +819,12 @@ impl Plugin for Ym38x6Plugin {
                 // 選択する（VST3では届かない。CLAPのみ。MidiConfig::MidiCCsの仕様）
                 NoteEvent::MidiProgramChange { program, .. } => {
                     let bank = (self.bank_select_msb as u16) * 128 + self.bank_select_lsb as u16;
-                    self.program_patch = Some(placeholder_patch(bank, program));
+                    let patch = self
+                        .preset_bank
+                        .get(bank, program)
+                        .map(|preset| preset.patch)
+                        .unwrap_or_else(|| placeholder_patch(bank, program));
+                    self.program_patch = Some(patch);
                 }
                 // パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN Destination/Waveform）・
                 // マスターエフェクトセンドレベル（CC91/93）

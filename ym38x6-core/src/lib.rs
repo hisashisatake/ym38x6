@@ -14,7 +14,8 @@ use mapping::{feedback_to_scale, frequency_to_note, FM_MODULATION_INDEX_SCALE};
 use operator::Operator;
 // Ym38x6Patch::operators / set_operator_paramsの型として外部に公開する
 pub use operator::OperatorParams;
-pub use preset::placeholder_patch;
+pub use preset::{placeholder_patch, Preset, PresetBank};
+use serde::{Deserialize, Serialize};
 use sound_core::{
     apply_lfo_modulation, convert_wave_32, PerformanceLfo, PerformanceLfoTarget, WaveTable,
 };
@@ -31,7 +32,7 @@ pub use sound_core::{
 // パッチ（チャンネル + オペレーター4個分のパラメーター一式）
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChannelParams {
     /// アルゴリズム番号(0〜7)。
     pub algorithm: u8,
@@ -96,7 +97,7 @@ impl Default for ChannelParams {
 }
 
 /// 4op分のオペレーターパラメーター + チャンネルパラメーターの一式。
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Ym38x6Patch {
     pub operators: [OperatorParams; 4],
     pub channel: ChannelParams,
