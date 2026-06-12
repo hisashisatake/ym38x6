@@ -1,0 +1,7 @@
+[package]
+name = "ym38x6-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sound-core = { path = "../sound-core" }

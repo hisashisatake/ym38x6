@@ -3,6 +3,7 @@ members = [
     "sound-core",
     "wms1-core",
     "wms1-vst",
+    "ym38x6-core",
     "gesture-app/src-tauri",
 ]
 resolver = "2"
