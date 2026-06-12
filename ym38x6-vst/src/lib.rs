@@ -254,7 +254,7 @@ impl Default for OperatorVstParams {
             d2r: IntParam::new("D2R", 80, IntRange::Linear { min: 0, max: 255 }),
             d1l: IntParam::new("D1L", 180, IntRange::Linear { min: 0, max: 255 }),
             rr: IntParam::new("RR", 150, IntRange::Linear { min: 0, max: 255 }),
-            mul: IntParam::new("MUL", 16, IntRange::Linear { min: 0, max: 255 }),
+            mul: IntParam::new("MUL", 1, IntRange::Linear { min: 0, max: 15 }),
             dt1: IntParam::new("DT1", 128, IntRange::Linear { min: 0, max: 255 }),
             ksr: IntParam::new("KSR", 64, IntRange::Linear { min: 0, max: 255 }),
             ame: BoolParam::new("AM Enable", false),

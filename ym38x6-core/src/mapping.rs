@@ -5,12 +5,13 @@
 // 実装後に音を聴いて係数を調整する。
 // ---------------------------------------------------------------------------
 
-/// MUL値(0〜255)→周波数比。OPNのMUL(0=0.5倍、1〜15=等倍)を16段階に量子化。
+/// MUL値(0〜15)→周波数比。OPM/OPN/OPQ/OPZ共通のMultiple(4bit、0=0.5倍、1〜15=等倍)に準拠。
+/// 8bit統一の例外（[operator.rs](operator.rs)のOperatorParams::mul参照）。
 pub fn mul_to_ratio(mul: u8) -> f32 {
     const TABLE: [f32; 16] = [
         0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
     ];
-    TABLE[((mul as usize * 16) / 256).min(15)]
+    TABLE[(mul as usize).min(15)]
 }
 
 /// DT1値(0〜255、中心128)→セント。中心128で±0、両端で±DETUNE_RANGE_CENTS（暫定50セント）。
@@ -109,8 +110,10 @@ mod tests {
     #[test]
     fn mul_to_ratio_bounds() {
         assert_eq!(mul_to_ratio(0), 0.5);
+        assert_eq!(mul_to_ratio(15), 15.0);
+        assert_eq!(mul_to_ratio(1), 1.0);
+        // 範囲外(16〜255)は15にクランプ
         assert_eq!(mul_to_ratio(255), 15.0);
-        assert_eq!(mul_to_ratio(16), 1.0);
     }
 
     #[test]

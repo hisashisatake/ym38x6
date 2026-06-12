@@ -27,7 +27,7 @@ pub fn placeholder_patch(bank: u16, program: u8) -> Ym38x6Patch {
         d2r: 0,
         d1l: 255,
         rr: 255,
-        mul: 16,
+        mul: 1,
         dt1: 128,
         ksr: 0,
         am_enable: false,
@@ -70,7 +70,7 @@ fn acoustic_grand_piano_patch() -> Ym38x6Patch {
         d2r: 80,
         d1l: 100,
         rr: 180,
-        mul: 16,
+        mul: 1,
         dt1: 128,
         ksr: 100,
         am_enable: false,
@@ -85,7 +85,7 @@ fn acoustic_grand_piano_patch() -> Ym38x6Patch {
         d2r: 30,
         d1l: 200,
         rr: 120,
-        mul: 16,
+        mul: 1,
         dt1: 128,
         ksr: 120,
         am_enable: false,
@@ -100,7 +100,7 @@ fn acoustic_grand_piano_patch() -> Ym38x6Patch {
         d2r: 100,
         d1l: 60,
         rr: 200,
-        mul: 32,
+        mul: 2,
         dt1: 138,
         ksr: 100,
         am_enable: false,
@@ -115,7 +115,7 @@ fn acoustic_grand_piano_patch() -> Ym38x6Patch {
         d2r: 35,
         d1l: 180,
         rr: 130,
-        mul: 16,
+        mul: 1,
         dt1: 118,
         ksr: 120,
         am_enable: false,
@@ -141,7 +141,7 @@ fn electric_piano_1_patch() -> Ym38x6Patch {
         d2r: 150,
         d1l: 40,
         rr: 200,
-        mul: 224,
+        mul: 14,
         dt1: 128,
         ksr: 80,
         am_enable: false,
@@ -156,7 +156,7 @@ fn electric_piano_1_patch() -> Ym38x6Patch {
         d2r: 120,
         d1l: 30,
         rr: 180,
-        mul: 16,
+        mul: 1,
         dt1: 128,
         ksr: 100,
         am_enable: false,
@@ -171,7 +171,7 @@ fn electric_piano_1_patch() -> Ym38x6Patch {
         d2r: 50,
         d1l: 150,
         rr: 150,
-        mul: 16,
+        mul: 1,
         dt1: 128,
         ksr: 90,
         am_enable: false,
@@ -186,7 +186,7 @@ fn electric_piano_1_patch() -> Ym38x6Patch {
         d2r: 25,
         d1l: 220,
         rr: 120,
-        mul: 16,
+        mul: 1,
         dt1: 128,
         ksr: 110,
         am_enable: false,
@@ -214,7 +214,7 @@ fn lead_1_square_patch() -> Ym38x6Patch {
         d2r: 0,
         d1l: 255,
         rr: 80,
-        mul: 16,
+        mul: 1,
         dt1: 128,
         ksr: 0,
         am_enable: false,
@@ -225,7 +225,7 @@ fn lead_1_square_patch() -> Ym38x6Patch {
     patch.operators[1] = OperatorParams { dt1: 138, ..base };
     patch.operators[2] = OperatorParams { dt1: 118, ..base };
     patch.operators[3] =
-        OperatorParams { mul: 32, tl: 140, velocity_sensitivity: 20, ..base };
+        OperatorParams { mul: 2, tl: 140, velocity_sensitivity: 20, ..base };
     patch
 }
 

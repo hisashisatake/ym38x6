@@ -16,7 +16,8 @@ pub enum EnvPhase {
     Idle,
 }
 
-/// オペレーター単位パラメーター一式（全8bit、11個）。NRPN/DAWパラメーターから直接コピー可能。
+/// オペレーター単位パラメーター一式（11個）。NRPN/DAWパラメーターから直接コピー可能。
+/// 基本は全8bit(0〜255)だが、`mul`は0〜255統一の例外（[mapping::mul_to_ratio](crate::mapping::mul_to_ratio)参照）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OperatorParams {
     pub tl: u8,
@@ -25,6 +26,7 @@ pub struct OperatorParams {
     pub d2r: u8,
     pub d1l: u8,
     pub rr: u8,
+    /// MUL（周波数比、0〜15）。OPM/OPN/OPQ/OPZ共通のMultiple(4bit)に準拠。
     pub mul: u8,
     pub dt1: u8,
     pub ksr: u8,
@@ -178,7 +180,7 @@ mod tests {
             d2r: 255,
             d1l: 128,
             rr: 255,
-            mul: 16,
+            mul: 1,
             dt1: 128,
             ksr: 0,
             am_enable: false,
@@ -244,20 +246,20 @@ mod tests {
     #[test]
     fn mul_and_dt1_change_effective_frequency() {
         let mut params = fast_params();
-        params.mul = 16; // ratio = 1.0
+        params.mul = 1; // ratio = 1.0
         params.dt1 = 128; // 0 cents
         let mut op = Operator::new(params);
         op.note_on(440.0, 127);
         let base = op.effective_frequency();
         assert!((base - 440.0).abs() < 1e-3);
 
-        // MULを変えると周波数が変わる（mul=32 → ratio=2.0）
-        op.params.mul = 32;
+        // MULを変えると周波数が変わる（mul=2 → ratio=2.0）
+        op.params.mul = 2;
         let doubled = op.effective_frequency();
         assert!((doubled - 880.0).abs() < 1e-3);
 
         // DT1を変えると周波数が変わる（dt1=128に戻し、dt1=0で-50セント）
-        op.params.mul = 16;
+        op.params.mul = 1;
         op.params.dt1 = 0;
         let detuned = op.effective_frequency();
         assert!(detuned < base, "detune downward should lower frequency: {detuned} vs {base}");
