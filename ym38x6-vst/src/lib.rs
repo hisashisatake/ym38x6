@@ -5,9 +5,9 @@ use std::sync::Arc;
 use ym38x6_core::algorithm::ALGORITHMS;
 use ym38x6_core::mapping::F_NUMBER_CENTER;
 use ym38x6_core::{
-    pitch_depth_cents, placeholder_patch, volume_depth, ChannelParams, ChorusType, LfoWaveform,
-    MasterEffects, OperatorParams, PresetBank, ReverbType, SoundEngine, Ym38x6Engine,
-    Ym38x6LfoDestination, Ym38x6Patch,
+    gm2_bank0_patch, pitch_depth_cents, placeholder_patch, volume_depth, ChannelParams,
+    ChorusType, LfoWaveform, MasterEffects, OperatorParams, PresetBank, ReverbType, SoundEngine,
+    Ym38x6Engine, Ym38x6LfoDestination, Ym38x6Patch,
 };
 
 /// ユーザープリセットの読み込み元ディレクトリ（暫定）。
@@ -815,14 +815,17 @@ impl Plugin for Ym38x6Plugin {
                 NoteEvent::PolyPressure { note, pressure, .. } => {
                     self.poly_pressure.insert(note, cc_to_u8(pressure));
                 }
-                // Program Change：CC0/CC32で選択中のバンクと合わせ、暫定プレースホルダーパッチを
-                // 選択する（VST3では届かない。CLAPのみ。MidiConfig::MidiCCsの仕様）
+                // Program Change：CC0/CC32で選択中のバンクと合わせてパッチを選択する
+                // （VST3では届かない。CLAPのみ。MidiConfig::MidiCCsの仕様）。
+                // 優先順位: ユーザープリセット(.38x6) > GM2 Bank0手動チューニング(該当programのみ)
+                // > 暫定プレースホルダーパッチ
                 NoteEvent::MidiProgramChange { program, .. } => {
                     let bank = (self.bank_select_msb as u16) * 128 + self.bank_select_lsb as u16;
                     let patch = self
                         .preset_bank
                         .get(bank, program)
                         .map(|preset| preset.patch)
+                        .or_else(|| (bank == 0).then(|| gm2_bank0_patch(program)).flatten())
                         .unwrap_or_else(|| placeholder_patch(bank, program));
                     self.program_patch = Some(patch);
                 }

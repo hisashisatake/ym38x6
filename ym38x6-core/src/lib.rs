@@ -14,7 +14,7 @@ use mapping::{feedback_to_scale, frequency_to_note, FM_MODULATION_INDEX_SCALE};
 use operator::Operator;
 // Ym38x6Patch::operators / set_operator_paramsの型として外部に公開する
 pub use operator::OperatorParams;
-pub use preset::{placeholder_patch, Preset, PresetBank};
+pub use preset::{gm2_bank0_patch, placeholder_patch, Preset, PresetBank};
 use serde::{Deserialize, Serialize};
 use sound_core::{
     apply_lfo_modulation, convert_wave_32, PerformanceLfo, PerformanceLfoTarget, WaveTable,
