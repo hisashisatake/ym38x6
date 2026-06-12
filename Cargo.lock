@@ -1232,9 +1232,11 @@ version = "0.1.0"
 dependencies = [
  "configparser",
  "cpal",
+ "serde",
  "tauri",
  "tauri-build",
  "wms1-core",
+ "ym38x6-core",
 ]
 
 [[package]]

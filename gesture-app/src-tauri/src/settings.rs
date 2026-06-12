@@ -9,6 +9,7 @@ fn settings_path() -> PathBuf {
 }
 
 pub struct Settings {
+    /// "wms1" または "ym38x6"。main.rsの`EngineHandle`で使用するエンジンを切り替える。
     pub engine_type: String,
 }
 

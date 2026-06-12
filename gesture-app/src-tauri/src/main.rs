@@ -1,24 +1,57 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod settings;
+mod ym38x6_dto;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 use wms1_core::{AdsrParams, ChorusType, LfoDestination, LfoWaveform, MasterEffects, ReverbType,
     SoundEngine, Wms1Engine, pitch_depth_cents, volume_depth};
+use ym38x6_core::{Ym38x6Engine, Ym38x6LfoDestination};
+use ym38x6_dto::Ym38x6PatchDto;
 
+/// 起動時に選択されたエンジンの実体を保持する（settings.engine_typeで切り替え）。
+/// `render`は両エンジン共通だが、note_on等の音色設定APIはエンジンごとに異なる形で
+/// 公開するため（CLAUDE.md方針）、各Tauriコマンドはmatchで対応するエンジンに振り分ける。
+enum EngineHandle {
+    Wms1(Wms1Engine),
+    Ym38x6(Ym38x6Engine),
+}
+
+impl EngineHandle {
+    fn render(&mut self, output: &mut [f32], num_channels: usize) {
+        match self {
+            EngineHandle::Wms1(e) => e.render(output, num_channels),
+            EngineHandle::Ym38x6(e) => e.render(output, num_channels),
+        }
+    }
+}
+
+/// フロントエンドが起動時にどちらのコマンド群（note_on系/ym38x6_note_on系）を
+/// 使うべきかを判定するために呼ぶ。"wms1" / "ym38x6"を返す。
 #[tauri::command]
-fn note_on(
-    engine: tauri::State<'_, Arc<Mutex<Wms1Engine>>>,
-    wave_slot: u8,
-    frequency: f32,
-) -> usize {
-    engine.lock().unwrap().note_on(wave_slot, frequency, AdsrParams::default())
+fn engine_type(engine_type: tauri::State<'_, String>) -> String {
+    (*engine_type).clone()
 }
 
 #[tauri::command]
-fn note_off(engine: tauri::State<'_, Arc<Mutex<Wms1Engine>>>, channel: usize) {
-    engine.lock().unwrap().note_off(channel);
+fn note_on(
+    engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>,
+    wave_slot: u8,
+    frequency: f32,
+) -> usize {
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Wms1(e) => e.note_on(wave_slot, frequency, AdsrParams::default()),
+        EngineHandle::Ym38x6(_) => 0,
+    }
+}
+
+#[tauri::command]
+fn note_off(engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>, channel: usize) {
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Wms1(e) => e.note_off(channel),
+        EngineHandle::Ym38x6(_) => {}
+    }
 }
 
 /// パフォーマンスLFOを設定する。
@@ -27,7 +60,7 @@ fn note_off(engine: tauri::State<'_, Arc<Mutex<Wms1Engine>>>, channel: usize) {
 /// `cc77`/`cc1`/`mod_depth_range`は仕様の実効Depth計算式（CC77/CC1/RPN0,5）への入力
 #[tauri::command]
 fn set_performance_lfo(
-    engine: tauri::State<'_, Arc<Mutex<Wms1Engine>>>,
+    engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>,
     channel: usize,
     rate: u8,
     delay: u8,
@@ -48,7 +81,77 @@ fn set_performance_lfo(
         LfoDestination::Pitch => pitch_depth_cents(cc77, cc1, mod_depth_range),
         LfoDestination::Volume => volume_depth(cc77, cc1),
     };
-    engine.lock().unwrap().set_performance_lfo(channel, rate, delay, waveform, destination, depth);
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Wms1(e) => e.set_performance_lfo(channel, rate, delay, waveform, destination, depth),
+        EngineHandle::Ym38x6(_) => {}
+    }
+}
+
+/// 38x6エンジンでNote-Onする。`patch`は4オペレーター分のパラメーターとチャンネルパラメーター一式。
+#[tauri::command]
+fn ym38x6_note_on(
+    engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>,
+    frequency: f32,
+    velocity: u8,
+    patch: Ym38x6PatchDto,
+) -> usize {
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Ym38x6(e) => e.note_on_with_velocity(frequency, velocity, patch.into()),
+        EngineHandle::Wms1(_) => 0,
+    }
+}
+
+#[tauri::command]
+fn ym38x6_note_off(engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>, channel: usize) {
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Ym38x6(e) => e.note_off(channel),
+        EngineHandle::Wms1(_) => {}
+    }
+}
+
+/// 以降のNote-Onで使われるカレントパッチを設定する。
+#[tauri::command]
+fn ym38x6_set_patch(engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>, patch: Ym38x6PatchDto) {
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Ym38x6(e) => e.set_patch(patch.into()),
+        EngineHandle::Wms1(_) => {}
+    }
+}
+
+/// 38x6エンジンのパフォーマンスLFOを設定する。
+/// `destination`: 0=Pitch（ビブラート） / 1=Volume（トレモロ） / 2=TL（キャリア一括、38x6拡張）
+/// その他の引数は`set_performance_lfo`と同様。
+#[tauri::command]
+fn ym38x6_set_performance_lfo(
+    engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>,
+    channel: usize,
+    rate: u8,
+    delay: u8,
+    waveform: u8,
+    destination: u8,
+    cc77: u8,
+    cc1: u8,
+    mod_depth_range: u8,
+) {
+    let waveform = match waveform {
+        1 => LfoWaveform::Sine,
+        2 => LfoWaveform::Square,
+        3 => LfoWaveform::SampleHold,
+        _ => LfoWaveform::Triangle,
+    };
+    let destination = match destination {
+        1 => Ym38x6LfoDestination::Volume,
+        2 => Ym38x6LfoDestination::TlCarrier,
+        _ => Ym38x6LfoDestination::Pitch,
+    };
+    let depth = match destination {
+        Ym38x6LfoDestination::Pitch => pitch_depth_cents(cc77, cc1, mod_depth_range),
+        Ym38x6LfoDestination::Volume | Ym38x6LfoDestination::TlCarrier => volume_depth(cc77, cc1),
+    };
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Ym38x6(e) => e.set_performance_lfo(channel, rate, delay, waveform, destination, depth),
+        EngineHandle::Wms1(_) => {}
+    }
 }
 
 /// マスターエフェクト（Reverb/Chorus）を設定する。
@@ -80,8 +183,6 @@ fn set_master_effects(
 
 fn main() {
     let settings = settings::Settings::load();
-    // ステップ5でエンジン切り替えを実装。現時点は wms1 固定
-    let _ = &settings.engine_type;
 
     let host = cpal::default_host();
     let device = host
@@ -95,7 +196,12 @@ fn main() {
     let sample_rate = supported.sample_rate().0 as f32;
     let stream_config: cpal::StreamConfig = supported.into();
 
-    let engine = Arc::new(Mutex::new(Wms1Engine::new(sample_rate)));
+    let engine_handle = if settings.engine_type == "ym38x6" {
+        EngineHandle::Ym38x6(Ym38x6Engine::new(sample_rate))
+    } else {
+        EngineHandle::Wms1(Wms1Engine::new(sample_rate))
+    };
+    let engine = Arc::new(Mutex::new(engine_handle));
     let engine_audio = Arc::clone(&engine);
     let effects = Arc::new(Mutex::new(MasterEffects::new(sample_rate)));
     let effects_audio = Arc::clone(&effects);
@@ -122,7 +228,18 @@ fn main() {
     tauri::Builder::default()
         .manage(engine)
         .manage(effects)
-        .invoke_handler(tauri::generate_handler![note_on, note_off, set_performance_lfo, set_master_effects])
+        .manage(settings.engine_type)
+        .invoke_handler(tauri::generate_handler![
+            engine_type,
+            note_on,
+            note_off,
+            set_performance_lfo,
+            set_master_effects,
+            ym38x6_note_on,
+            ym38x6_note_off,
+            ym38x6_set_patch,
+            ym38x6_set_performance_lfo,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 
