@@ -14,6 +14,9 @@ const DEFAULT_CHORUS_MOD_DEPTH: u8 = 128;
 const DEFAULT_CHORUS_FEEDBACK: u8 = 0;
 const DEFAULT_CHORUS_SEND_TO_REVERB: u8 = 0;
 
+/// Algorithmのデフォルト値（NRPN(0,9)併用のnih-plugパラメーター、`ChannelParams::default()`の内部初期値と一致）
+const DEFAULT_ALGORITHM: u8 = 0;
+
 /// MIDI CC値（0.0〜1.0正規化）を本プロジェクトの内部表現（0〜255）に変換
 fn cc_to_u8(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 255.0).round() as u8
@@ -120,9 +123,11 @@ struct Ym38x6Plugin {
     note_channels: HashMap<u8, usize>, // MIDIノート番号 → エンジンチャンネルID
     render_buffer: Vec<f32>, // プロセスコールバック用インターリーブ作業バッファ
     sample_rate: f32,
-    // NRPN専用パラメーター（DAWオートメーション非公開、3.3.4でNRPN(0,9)〜(0,15)から配線）。
-    // デフォルト値はChannelParams::default()/OperatorParams::default()に合わせる。
+    // Algorithm：NRPN(0,9)に加えてnih-plugのチャンネル単位パラメーターとしても公開する
+    // （last_algorithmで差分検知、process()参照）。
     algorithm: u8,
+    // NRPN専用パラメーター（DAWオートメーション非公開、3.3.4でNRPN(0,10)〜(0,15)から配線）。
+    // デフォルト値はChannelParams::default()/OperatorParams::default()に合わせる。
     filter_type: u8,
     filter_self_oscillation: bool,
     operator_waveforms: [u8; 4],
@@ -154,6 +159,9 @@ struct Ym38x6Plugin {
     nrpn_msb: u8,
     nrpn_lsb: u8,
     rpn_selection: RpnSelection,
+
+    // Algorithmの「前回ブロックで適用したnih-plug値」（1シャドウ差分検知方式、下記マスター5パラメーターと同型）
+    last_algorithm: u8,
 
     // マスター単位5パラメーターの「前回ブロックで適用したnih-plug値」（1シャドウ差分検知方式）
     last_reverb_time: u8,
@@ -220,7 +228,9 @@ impl Default for OperatorVstParams {
 
 #[derive(Params)]
 struct Ym38x6Params {
-    // ---- チャンネル単位（19個、spec.md MIDI実装方針参照） ----
+    // ---- チャンネル単位（20個、spec.md MIDI実装方針参照） ----
+    #[id = "algorithm"]
+    pub algorithm: IntParam,
     #[id = "feedback"]
     pub feedback: IntParam,
     #[id = "lfo_rate"]
@@ -280,6 +290,7 @@ struct Ym38x6Params {
 impl Default for Ym38x6Params {
     fn default() -> Self {
         Self {
+            algorithm: IntParam::new("Algorithm", DEFAULT_ALGORITHM as i32, IntRange::Linear { min: 0, max: 7 }),
             feedback: IntParam::new("Feedback", 0, IntRange::Linear { min: 0, max: 255 }),
             lfo_rate: IntParam::new("Perf LFO Rate", 0, IntRange::Linear { min: 0, max: 255 }),
             lfo_depth: IntParam::new("Perf LFO Depth", 0, IntRange::Linear { min: 0, max: 255 }),
@@ -319,7 +330,7 @@ impl Default for Ym38x6Plugin {
             note_channels: HashMap::new(),
             render_buffer: Vec::new(),
             sample_rate: DEFAULT_SR,
-            algorithm: 0,
+            algorithm: DEFAULT_ALGORITHM,
             filter_type: 0,
             filter_self_oscillation: true,
             operator_waveforms: [0; 4],
@@ -340,6 +351,7 @@ impl Default for Ym38x6Plugin {
             nrpn_msb: 0,
             nrpn_lsb: 0,
             rpn_selection: RpnSelection::default(),
+            last_algorithm: DEFAULT_ALGORITHM,
             last_reverb_time: DEFAULT_REVERB_TIME,
             last_chorus_mod_rate: DEFAULT_CHORUS_MOD_RATE,
             last_chorus_mod_depth: DEFAULT_CHORUS_MOD_DEPTH,
@@ -614,6 +626,14 @@ impl Plugin for Ym38x6Plugin {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        // Algorithm：DAWオートメーションで値が変化した場合のみ反映する（NRPN(0,9)はself.algorithmへ
+        // 直接書き込まれ、ここでの値が前回と同じ間は上書きされない。差分検知方式）。
+        let algorithm = self.params.algorithm.value() as u8;
+        if algorithm != self.last_algorithm {
+            self.algorithm = algorithm;
+            self.last_algorithm = algorithm;
+        }
+
         let patch = self.build_patch();
         self.engine.set_patch(patch);
 
