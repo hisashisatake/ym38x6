@@ -65,11 +65,14 @@ pub fn sl_to_level(sl: u8) -> f32 {
     x * x
 }
 
-/// KSR値(0〜255)→A4(note=69)からのオクターブ差に対するレート倍率（暫定）。
-/// ksr=0で常に1.0（KSR無効）、ksr=255でオクターブ差に比例して倍率が変化する。
+/// KSR値(0〜255)→A4(note=69)からのオクターブ差に対するレート倍率。
+/// 実機OPM/OPNのKSR(2bit)は1オクターブあたりのレート倍率が約1.09倍(KSR=0)〜
+/// 2倍(KSR=3)で、1段ごとに倍々(指数的)に増える。ksr=0〜255をこの範囲の
+/// 指数カーブにマッピングする（ksr=0でも実機KSR=0と同じ約9%/octの変化が残る）。
 pub fn ksr_rate_multiplier(ksr: u8, note: u8) -> f32 {
     let octave_diff = (note as f32 - 69.0) / 12.0;
-    2f32.powf(octave_diff * (ksr as f32 / 255.0))
+    let exponent = 0.125 * 2f32.powf(3.0 * ksr as f32 / 255.0);
+    2f32.powf(octave_diff * exponent)
 }
 
 /// 実効TL = clamp(TLベース値 + (Velocity/127) × VelocitySensitivity, 0, 255)
@@ -176,13 +179,16 @@ mod tests {
 
     #[test]
     fn ksr_rate_multiplier_bounds() {
-        // ksr=0なら常に1.0（KSR無効）
-        assert!((ksr_rate_multiplier(0, 81) - 1.0).abs() < 1e-6);
-        assert!((ksr_rate_multiplier(0, 57) - 1.0).abs() < 1e-6);
-        // note=69（A4）なら常に1.0（オクターブ差0）
+        // note=69（A4）ならオクターブ差0で常に1.0
+        assert!((ksr_rate_multiplier(0, 69) - 1.0).abs() < 1e-6);
         assert!((ksr_rate_multiplier(255, 69) - 1.0).abs() < 1e-6);
-        // ksr=255、1オクターブ上（note=81）なら2倍速
+        // ksr=0、1オクターブ上（note=81）は実機KSR=0相当（約1.09倍≒9%増）
+        assert!((ksr_rate_multiplier(0, 81) - 2f32.powf(0.125)).abs() < 1e-6);
+        // ksr=255、1オクターブ上（note=81）は実機KSR=3相当（2倍速）
         assert!((ksr_rate_multiplier(255, 81) - 2.0).abs() < 1e-6);
+        // ksr=0でも変化はゼロにならず、ksr=255より小さい
+        assert!(ksr_rate_multiplier(0, 81) > 1.0);
+        assert!(ksr_rate_multiplier(0, 81) < ksr_rate_multiplier(255, 81));
     }
 
     #[test]
