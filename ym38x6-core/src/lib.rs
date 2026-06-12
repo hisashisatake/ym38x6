@@ -359,6 +359,13 @@ impl Ym38x6Engine {
         }
     }
 
+    /// 発音中チャンネルの指定オペレーターのF-Numberを上書きする（NRPN Operator F-Number、0〜8191）。
+    pub fn set_operator_f_number(&mut self, channel: usize, op_index: usize, f_number: u16) {
+        if let Some(ch) = self.channels.get_mut(&channel) {
+            ch.operators[op_index].set_f_number_override(f_number);
+        }
+    }
+
     /// スロット8〜255にユーザー定義波形をロードする（wms1-coreと同一シグネチャ）。
     pub fn set_user_wave(&mut self, slot: u8, input: &[i8; 32]) {
         assert!(slot >= 8, "slots 0-7 are reserved for builtin waves");
@@ -452,6 +459,19 @@ mod tests {
 
         let mut buf = vec![0.0f32; 512];
         engine.render(&mut buf, 1);
+        assert!(buf.iter().any(|&s| s != 0.0), "expected non-silent output");
+    }
+
+    #[test]
+    fn set_operator_f_number_overrides_single_operator_frequency() {
+        let mut engine = Ym38x6Engine::new(44100.0);
+        let ch = engine.note_on_with_velocity(440.0, 127, loud_patch(0));
+
+        engine.set_operator_f_number(ch, 0, crate::mapping::F_NUMBER_CENTER / 2);
+
+        let mut buf = vec![0.0f32; 512];
+        engine.render(&mut buf, 1);
+        assert!(buf.iter().all(|&s| s.is_finite()), "expected finite output");
         assert!(buf.iter().any(|&s| s != 0.0), "expected non-silent output");
     }
 

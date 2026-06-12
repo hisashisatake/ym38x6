@@ -47,6 +47,8 @@ pub struct Operator {
     tone_lfo_amp_mod: f32,
     /// パフォーマンスLFO（ビブラート）によるピッチ変調（セント、全Op共通、Channelが毎サンプル設定）
     perf_lfo_pitch_mod_cents: f32,
+    /// OP単位F-Number上書き(NRPN Operator F-Number)による周波数比。1.0=上書きなし（Note-Onでリセット）。
+    f_number_ratio: f32,
 }
 
 impl Operator {
@@ -61,6 +63,7 @@ impl Operator {
             tone_lfo_pitch_mod_cents: 0.0,
             tone_lfo_amp_mod: 0.0,
             perf_lfo_pitch_mod_cents: 0.0,
+            f_number_ratio: 1.0,
         }
     }
 
@@ -70,6 +73,7 @@ impl Operator {
         self.phase = 0.0;
         self.env_phase = EnvPhase::Attack;
         self.env_level = 0.0;
+        self.f_number_ratio = 1.0;
     }
 
     pub fn note_off(&mut self) {
@@ -93,9 +97,14 @@ impl Operator {
         self.perf_lfo_pitch_mod_cents = cents;
     }
 
+    /// OP単位F-Number上書き（NRPN Operator F-Number、0〜8191）を設定する。
+    pub fn set_f_number_override(&mut self, f_number: u16) {
+        self.f_number_ratio = f_number_to_ratio(f_number);
+    }
+
     fn effective_frequency(&self) -> f32 {
         let cents = dt1_to_cents(self.params.dt1) + self.tone_lfo_pitch_mod_cents + self.perf_lfo_pitch_mod_cents;
-        self.frequency * mul_to_ratio(self.params.mul) * 2f32.powf(cents / 1200.0)
+        self.frequency * self.f_number_ratio * mul_to_ratio(self.params.mul) * 2f32.powf(cents / 1200.0)
     }
 
     fn tick_envelope(&mut self, sample_rate: f32, note: u8) {
@@ -251,6 +260,24 @@ mod tests {
         op.params.dt1 = 0;
         let detuned = op.effective_frequency();
         assert!(detuned < base, "detune downward should lower frequency: {detuned} vs {base}");
+    }
+
+    #[test]
+    fn f_number_override_changes_effective_frequency_and_resets_on_note_on() {
+        let mut op = Operator::new(fast_params());
+        op.note_on(440.0, 127);
+        let base = op.effective_frequency();
+        assert!((base - 440.0).abs() < 1e-3);
+
+        // F_NUMBER_CENTERの半分（2048）→比率0.5倍
+        op.set_f_number_override(F_NUMBER_CENTER / 2);
+        let halved = op.effective_frequency();
+        assert!((halved - 220.0).abs() < 1e-3);
+
+        // note_onで比率1.0にリセットされる
+        op.note_on(440.0, 127);
+        let reset = op.effective_frequency();
+        assert!((reset - 440.0).abs() < 1e-3);
     }
 
     #[test]

@@ -88,6 +88,16 @@ pub fn frequency_to_note(frequency: f32) -> u8 {
         .clamp(0.0, 127.0) as u8
 }
 
+/// 13bit F-Number(0〜8191)の中心値（2^12）。OP単位F-Number上書き(NRPN 0,18〜21)で
+/// 比率1.0（上書きなし、Note-On時と同じ周波数）を表す基準値（暫定）。
+pub const F_NUMBER_CENTER: u16 = 4096;
+
+/// F-Number(0〜8191)→周波数比。F_NUMBER_CENTERで1.0倍（上書きなし）、
+/// 全域で約0.0〜2.0倍（約2オクターブ分）の可変範囲を持つ（暫定）。
+pub fn f_number_to_ratio(f_number: u16) -> f32 {
+    f_number as f32 / F_NUMBER_CENTER as f32
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -172,5 +182,12 @@ mod tests {
         assert_eq!(frequency_to_note(440.0), 69);
         assert_eq!(frequency_to_note(880.0), 81);
         assert_eq!(frequency_to_note(220.0), 57);
+    }
+
+    #[test]
+    fn f_number_to_ratio_bounds() {
+        assert_eq!(f_number_to_ratio(F_NUMBER_CENTER), 1.0);
+        assert_eq!(f_number_to_ratio(0), 0.0);
+        assert!((f_number_to_ratio(8191) - 1.99976).abs() < 1e-4);
     }
 }

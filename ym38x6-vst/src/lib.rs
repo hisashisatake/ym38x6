@@ -2,6 +2,7 @@ use nih_plug::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use ym38x6_core::algorithm::ALGORITHMS;
+use ym38x6_core::mapping::F_NUMBER_CENTER;
 use ym38x6_core::{
     pitch_depth_cents, volume_depth, ChannelParams, ChorusType, LfoWaveform, MasterEffects,
     OperatorParams, ReverbType, SoundEngine, Ym38x6Engine, Ym38x6LfoDestination, Ym38x6Patch,
@@ -175,6 +176,11 @@ struct Ym38x6Plugin {
     poly_at_destination: AtDestination,
     channel_pressure: u8,
     poly_pressure: HashMap<u8, u8>, // MIDIノート番号 → Poly Key Pressure
+
+    // NRPN(0,18)〜(0,21): Operator F-Number Op0〜3（CC6+CC38の14bit値→13bit(0〜8191)にclamp）
+    data_entry_msb: u8,                     // CC6 (Data Entry MSB) の最新値
+    data_entry_lsb: u8,                     // CC38 (Data Entry LSB) の最新値
+    operator_f_number_override: [u16; 4],   // 各Opの上書き値。初期値F_NUMBER_CENTER（上書きなし）
 }
 
 /// オペレーター単位パラメーター一式（11個）。`Ym38x6Params`側で`[OperatorVstParams; 4]`として
@@ -361,6 +367,9 @@ impl Default for Ym38x6Plugin {
             poly_at_destination: AtDestination::default(),
             channel_pressure: 0,
             poly_pressure: HashMap::new(),
+            data_entry_msb: 0,
+            data_entry_lsb: 0,
+            operator_f_number_override: [F_NUMBER_CENTER; 4],
         }
     }
 }
@@ -438,6 +447,17 @@ impl Ym38x6Plugin {
         }
     }
 
+    /// NRPN(0,18)〜(0,21)：CC6(Data Entry MSB)+CC38(Data Entry LSB)の14bit値を
+    /// 13bit(0〜8191)にclampし、Operator F-Numberとして発音中の全チャンネルへ適用する。
+    fn apply_operator_f_number_override(&mut self, op_index: usize) {
+        let combined = (self.data_entry_msb as u16) * 128 + self.data_entry_lsb as u16;
+        let f_number = combined.min(8191);
+        self.operator_f_number_override[op_index] = f_number;
+        for &ch_id in self.note_channels.values() {
+            self.engine.set_operator_f_number(ch_id, op_index, f_number);
+        }
+    }
+
     /// CC99/98(NRPN)・CC101/100(RPN)受信時に選択状態を更新する。
     /// MSB,LSB=127,127（Null）の場合は選択解除する
     fn update_rpn_selection(&mut self, is_nrpn: bool) {
@@ -455,6 +475,7 @@ impl Ym38x6Plugin {
     /// `value`はCC値の正規化値（0.0〜1.0）。enum系パラメーターは`cc_to_u7`、
     /// 0〜255連続値パラメーターは`cc_to_u8`で変換する
     fn handle_data_entry(&mut self, value: f32) {
+        self.data_entry_msb = cc_to_u7(value);
         match self.rpn_selection {
             // RPN0,5: Modulation Depth Range
             RpnSelection::Rpn(0, 5) => {
@@ -541,6 +562,10 @@ impl Ym38x6Plugin {
             RpnSelection::Nrpn(0, 17) => {
                 self.poly_at_destination = AtDestination::from_u8(cc_to_u7(value));
             }
+            // NRPN(0,18)〜(0,21): Operator F-Number Op0〜3
+            RpnSelection::Nrpn(0, lsb @ 18..=21) => {
+                self.apply_operator_f_number_override((lsb - 18) as usize);
+            }
             _ => {}
         }
     }
@@ -618,6 +643,9 @@ impl Plugin for Ym38x6Plugin {
         self.poly_at_destination = AtDestination::default();
         self.channel_pressure = 0;
         self.poly_pressure.clear();
+        self.data_entry_msb = 0;
+        self.data_entry_lsb = 0;
+        self.operator_f_number_override = [F_NUMBER_CENTER; 4];
     }
 
     fn process(
@@ -729,6 +757,9 @@ impl Plugin for Ym38x6Plugin {
                     let ch_id = self.engine.note_on_with_velocity(freq, velocity_u8, patch);
                     self.note_channels.insert(note, ch_id);
                     self.apply_performance_lfo(ch_id);
+                    for (op_index, &f_number) in self.operator_f_number_override.iter().enumerate() {
+                        self.engine.set_operator_f_number(ch_id, op_index, f_number);
+                    }
                 }
                 NoteEvent::NoteOn { note, .. } | NoteEvent::NoteOff { note, .. } => {
                     // velocity=0 の NoteOn も NoteOff として扱う（MIDI仕様）
@@ -781,6 +812,12 @@ impl Plugin for Ym38x6Plugin {
                         self.update_rpn_selection(false);
                     }
                     6 => self.handle_data_entry(value),
+                    38 => {
+                        self.data_entry_lsb = cc_to_u7(value);
+                        if let RpnSelection::Nrpn(0, lsb @ 18..=21) = self.rpn_selection {
+                            self.apply_operator_f_number_override((lsb - 18) as usize);
+                        }
+                    }
                     91 => self.effects.set_reverb_send(cc_to_u8(value)),
                     93 => self.effects.set_chorus_send(cc_to_u8(value)),
                     _ => {}

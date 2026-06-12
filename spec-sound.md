@@ -565,6 +565,10 @@ NRPN番号は本実装（パフォーマンスLFO）で初めて定義する。M
 | Filter Self-Oscillation | 0, 15 | 0=OFF / 1=ON |
 | AT Destination | 0, 16 | 0〜5（destination enum、下記参照） |
 | Poly AT Destination | 0, 17 | 0〜5（destination enum、下記参照） |
+| Operator F-Number Op0 | 0, 18 | 0〜8191（13bit、CC6=MSB+CC38=LSBで送信、下記参照） |
+| Operator F-Number Op1 | 0, 19 | 同上 |
+| Operator F-Number Op2 | 0, 20 | 同上 |
+| Operator F-Number Op3 | 0, 21 | 同上 |
 
 **AT Destination / Poly AT Destination（アフタータッチの加算先）：**
 
@@ -592,9 +596,11 @@ Poly Key Pressure対応コントローラーは少数（MPE等）のため、多
 
 **Operator F-Number（OP単位F-Number上書き）：**
 
-Op0〜Op3それぞれに対応する4つのNRPNパラメーター。13bit値（0〜8191）をそのまま送信する（NRPNのデータエントリ精度14bitに対し1bit余裕がある）。
+NRPN(0,18)〜(0,21)がOp0〜Op3に対応する。CC6（Data Entry MSB）+ CC38（Data Entry LSB）で14bit値（0〜16383）として送信し、13bit（0〜8191）にclampして使用する（NRPNのデータエントリ精度14bitに対し1bit余裕がある）。CC38を送らないコントローラーではCC6のみ（128単位の粗い精度）でも動作する。
 
-デフォルトはNote-Onで設定された値（全Op共通）。NRPN送信時点から、該当オペレーターのF-Numberのみを独立して上書きする（オクターブは全Op共通のまま変化しない）。
+F-Number値はNote-On時の周波数（全Op共通）に対する比率として作用する：`周波数比 = F-Number / 4096`（4096 = 2^12が比率1.0=上書きなしに相当、13bit全域で約0〜2倍≒2オクターブ分の可変範囲）。
+
+デフォルトはNote-Onで設定された値（全Op共通、比率1.0）。NRPN送信時点から、該当オペレーターの周波数のみを独立して上書きする（オクターブ＝他Opとの基準周波数は変化しない）。
 
 ### Operator Key On/Off（OP単位キーオン/オフ、CC102〜105）
 
