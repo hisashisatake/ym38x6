@@ -1,6 +1,7 @@
 use nih_plug::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
+use ym38x6_core::algorithm::ALGORITHMS;
 use ym38x6_core::{
     pitch_depth_cents, volume_depth, ChannelParams, ChorusType, LfoWaveform, MasterEffects,
     OperatorParams, ReverbType, SoundEngine, Ym38x6Engine, Ym38x6LfoDestination, Ym38x6Patch,
@@ -31,6 +32,85 @@ enum RpnSelection {
     None,
     Rpn(u8, u8),
     Nrpn(u8, u8),
+}
+
+/// Channel Pressure / Poly Key Pressureの加算先（NRPN(0,16)/(0,17)、spec.md AT Destination参照）。
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+enum AtDestination {
+    #[default]
+    LfoPmd,
+    LfoAmd,
+    FilterCutoff,
+    FilterResonance,
+    TlAllOps,
+    TlCarriers,
+}
+
+impl AtDestination {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => AtDestination::LfoPmd,
+            1 => AtDestination::LfoAmd,
+            2 => AtDestination::FilterCutoff,
+            3 => AtDestination::FilterResonance,
+            4 => AtDestination::TlAllOps,
+            _ => AtDestination::TlCarriers,
+        }
+    }
+}
+
+/// Channel Pressure / Poly Key Pressureの加算モデルを指定ノートのパッチへ適用する。
+/// `実効値 = clamp(ベース値 + プレッシャー値, 0, 255)`（spec.md AT Destination参照）。
+/// `note_channels`の借用と`engine`への可変アクセスを同じループ内で行うため、
+/// `&self`を取らないフリー関数にしている。
+fn apply_at_modulation(
+    note: u8,
+    at_destination: AtDestination,
+    poly_at_destination: AtDestination,
+    channel_pressure: u8,
+    poly_pressure: &HashMap<u8, u8>,
+    patch: &mut Ym38x6Patch,
+) {
+    let pressure_for = |destination: AtDestination| -> u8 {
+        let mut total: u16 = 0;
+        if at_destination == destination {
+            total += channel_pressure as u16;
+        }
+        if poly_at_destination == destination {
+            total += *poly_pressure.get(&note).unwrap_or(&0) as u16;
+        }
+        total.min(255) as u8
+    };
+    let add = |base: u8, pressure: u8| (base as u16 + pressure as u16).min(255) as u8;
+
+    let pmd = pressure_for(AtDestination::LfoPmd);
+    if pmd > 0 {
+        patch.channel.tone_lfo_pmd = add(patch.channel.tone_lfo_pmd, pmd);
+    }
+    let amd = pressure_for(AtDestination::LfoAmd);
+    if amd > 0 {
+        patch.channel.tone_lfo_amd = add(patch.channel.tone_lfo_amd, amd);
+    }
+    let cutoff = pressure_for(AtDestination::FilterCutoff);
+    if cutoff > 0 {
+        patch.channel.filter_cutoff = add(patch.channel.filter_cutoff, cutoff);
+    }
+    let resonance = pressure_for(AtDestination::FilterResonance);
+    if resonance > 0 {
+        patch.channel.filter_resonance = add(patch.channel.filter_resonance, resonance);
+    }
+    let tl_all = pressure_for(AtDestination::TlAllOps);
+    if tl_all > 0 {
+        for op in patch.operators.iter_mut() {
+            op.tl = add(op.tl, tl_all);
+        }
+    }
+    let tl_carriers = pressure_for(AtDestination::TlCarriers);
+    if tl_carriers > 0 {
+        for &i in ALGORITHMS[patch.channel.algorithm as usize].carriers {
+            patch.operators[i].tl = add(patch.operators[i].tl, tl_carriers);
+        }
+    }
 }
 
 struct Ym38x6Plugin {
@@ -81,6 +161,12 @@ struct Ym38x6Plugin {
     last_chorus_mod_depth: u8,
     last_chorus_feedback: u8,
     last_chorus_send_to_reverb: u8,
+
+    // AT/Poly AT Destination（NRPN(0,16)/(0,17)）と、加算対象のプレッシャー値
+    at_destination: AtDestination,
+    poly_at_destination: AtDestination,
+    channel_pressure: u8,
+    poly_pressure: HashMap<u8, u8>, // MIDIノート番号 → Poly Key Pressure
 }
 
 /// オペレーター単位パラメーター一式（11個）。`Ym38x6Params`側で`[OperatorVstParams; 4]`として
@@ -259,6 +345,10 @@ impl Default for Ym38x6Plugin {
             last_chorus_mod_depth: DEFAULT_CHORUS_MOD_DEPTH,
             last_chorus_feedback: DEFAULT_CHORUS_FEEDBACK,
             last_chorus_send_to_reverb: DEFAULT_CHORUS_SEND_TO_REVERB,
+            at_destination: AtDestination::default(),
+            poly_at_destination: AtDestination::default(),
+            channel_pressure: 0,
+            poly_pressure: HashMap::new(),
         }
     }
 }
@@ -431,6 +521,14 @@ impl Ym38x6Plugin {
             RpnSelection::Nrpn(0, 15) => {
                 self.filter_self_oscillation = cc_to_u7(value) != 0;
             }
+            // NRPN(0,16): AT Destination（Channel Pressureの加算先）
+            RpnSelection::Nrpn(0, 16) => {
+                self.at_destination = AtDestination::from_u8(cc_to_u7(value));
+            }
+            // NRPN(0,17): Poly AT Destination（Poly Key Pressureの加算先）
+            RpnSelection::Nrpn(0, 17) => {
+                self.poly_at_destination = AtDestination::from_u8(cc_to_u7(value));
+            }
             _ => {}
         }
     }
@@ -504,6 +602,10 @@ impl Plugin for Ym38x6Plugin {
         self.last_chorus_mod_depth = DEFAULT_CHORUS_MOD_DEPTH;
         self.last_chorus_feedback = DEFAULT_CHORUS_FEEDBACK;
         self.last_chorus_send_to_reverb = DEFAULT_CHORUS_SEND_TO_REVERB;
+        self.at_destination = AtDestination::default();
+        self.poly_at_destination = AtDestination::default();
+        self.channel_pressure = 0;
+        self.poly_pressure.clear();
     }
 
     fn process(
@@ -515,10 +617,19 @@ impl Plugin for Ym38x6Plugin {
         let patch = self.build_patch();
         self.engine.set_patch(patch);
 
-        // 発音中チャンネルへDAWオートメーションの変更を反映する
-        for &ch_id in self.note_channels.values() {
-            self.engine.set_channel_params(ch_id, patch.channel);
-            for (op_index, op) in patch.operators.iter().enumerate() {
+        // 発音中チャンネルへDAWオートメーションの変更とAT/Poly AT Destinationの加算を反映する
+        for (&note, &ch_id) in self.note_channels.iter() {
+            let mut note_patch = patch;
+            apply_at_modulation(
+                note,
+                self.at_destination,
+                self.poly_at_destination,
+                self.channel_pressure,
+                &self.poly_pressure,
+                &mut note_patch,
+            );
+            self.engine.set_channel_params(ch_id, note_patch.channel);
+            for (op_index, op) in note_patch.operators.iter().enumerate() {
                 self.engine.set_operator_params(ch_id, op_index, *op);
             }
         }
@@ -605,6 +716,14 @@ impl Plugin for Ym38x6Plugin {
                         self.engine.note_off(ch_id);
                         self.note_channels.remove(&note);
                     }
+                    self.poly_pressure.remove(&note);
+                }
+                // AT/Poly AT Destination（NRPN(0,16)/(0,17)）の加算対象
+                NoteEvent::MidiChannelPressure { pressure, .. } => {
+                    self.channel_pressure = cc_to_u8(pressure);
+                }
+                NoteEvent::PolyPressure { note, pressure, .. } => {
+                    self.poly_pressure.insert(note, cc_to_u8(pressure));
                 }
                 // パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN Destination/Waveform）・
                 // マスターエフェクトセンドレベル（CC91/93）
