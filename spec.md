@@ -848,7 +848,7 @@ F-Numberの更新:             フレームごと（≒16ms以内）
   → PerformanceLfo / PerformanceLfoTarget をsound-coreに実装
   → MasterEffects（Reverb/Chorus）をsound-coreに実装
 
-フェーズ3: 38x6 FMエンジン導入、波形選択・デチューン拡張
+フェーズ3: 38x6 FMエンジン導入、波形選択・デチューン拡張（完了）
   → OPZ系の音色表現を取り込む
 
 フェーズ4: OP単位F-Number・独立キーオンを実装
@@ -862,15 +862,12 @@ F-Numberの更新:             フレームごと（≒16ms以内）
   → Bank Select / Program Change 実装
   → 同一リポジトリ内の ym38x6-ml/ に収録
 
-フェーズ6: VST/CLAPプラグイン化（オプション）
-  → nih-plugでym38x6-coreをラップ
+フェーズ6: スケール判定・アボイド挙動の検証
 
-フェーズ7: スケール判定・アボイド挙動の検証
-
-フェーズ8: タブレット対応（Tauri v2 iOS/Android）
+フェーズ7: タブレット対応（Tauri v2 iOS/Android）
   → マルチタッチ入力の実装（UIロジックは共通）
 
-フェーズ9: アルゴリズム拡張モード（オプション）
+フェーズ8: アルゴリズム拡張モード（オプション）
   → SY77スタイルのルーティングレジスタ公開
 ```
 
@@ -897,6 +894,18 @@ ym38x6/                  ← ワークスペースルート
 
   wms1-vst/              ← WMS-1 VST3/CLAPプラグイン（nih-plug）
 
+  ym38x6-core/           ← 38x6 FMエンジン実装（sound-coreに依存）
+    Cargo.toml
+    src/lib.rs             ← Ym38x6Engine（4opFM合成 + フィルター + 音色LFO + チャンネル管理）
+    src/operator.rs        ← Operator（オシレーター + EG + パラメーター）
+    src/algorithm.rs       ← アルゴリズム結線テーブル（ymfm由来）
+    src/waveform.rs        ← OPZ系8波形生成
+    src/mapping.rs         ← パラメーターマッピング関数群
+    src/tone_lfo.rs        ← 音色LFO
+    src/filter.rs          ← SVF + Filter EG
+
+  ym38x6-vst/            ← 38x6 VST3/CLAPプラグイン（nih-plug）
+
   gesture-app/           ← 作曲支援デスクトップアプリ（メイン開発対象）
     package.json
     src/                   ← フロントエンド（HTML/JS）
@@ -910,8 +919,6 @@ ym38x6/                  ← ワークスペースルート
       icons/               ← アプリアイコン
       capabilities/        ← Tauri v2 パーミッション設定
 
-  （フェーズ3以降: ym38x6-core/ を追加し4opFM合成を実装）
-  （フェーズ6以降: ym38x6-vst/ を追加し、nih-plugでym38x6-coreをラップ）
 ```
 
 ### 各層の技術
@@ -921,7 +928,7 @@ ym38x6/                  ← ワークスペースルート
 アプリ:         Tauri（VST3/CLAP両対応）
 音声出力:       cpal（デスクトップ）/ Core Audio（iOS、将来）
 参照実装:       ymfm（C++、BSD 3-Clause）
-VSTプラグイン:  nih-plug（wms1-vstは実装済み、ym38x6-vstはフェーズ6以降）
+VSTプラグイン:  nih-plug（wms1-vst・ym38x6-vstともに実装済み）
 ターゲット:     Windowsデスクトップ → タブレット（iOS/Android）→ VST
 ```
 
