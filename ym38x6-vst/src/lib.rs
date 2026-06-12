@@ -4,8 +4,9 @@ use std::sync::Arc;
 use ym38x6_core::algorithm::ALGORITHMS;
 use ym38x6_core::mapping::F_NUMBER_CENTER;
 use ym38x6_core::{
-    pitch_depth_cents, volume_depth, ChannelParams, ChorusType, LfoWaveform, MasterEffects,
-    OperatorParams, ReverbType, SoundEngine, Ym38x6Engine, Ym38x6LfoDestination, Ym38x6Patch,
+    pitch_depth_cents, placeholder_patch, volume_depth, ChannelParams, ChorusType, LfoWaveform,
+    MasterEffects, OperatorParams, ReverbType, SoundEngine, Ym38x6Engine, Ym38x6LfoDestination,
+    Ym38x6Patch,
 };
 
 /// マスター単位5パラメーターのデフォルト値（wms1-vstと同じ値、`MasterEffects::new()`の内部初期値と一致）
@@ -181,6 +182,11 @@ struct Ym38x6Plugin {
     data_entry_msb: u8,                     // CC6 (Data Entry MSB) の最新値
     data_entry_lsb: u8,                     // CC38 (Data Entry LSB) の最新値
     operator_f_number_override: [u16; 4],   // 各Opの上書き値。初期値F_NUMBER_CENTER（上書きなし）
+
+    // Bank Select（CC0=MSB, CC32=LSB）+ Program Change：暫定プレースホルダーパッチの選択状態
+    bank_select_msb: u8,                 // CC0
+    bank_select_lsb: u8,                 // CC32
+    program_patch: Option<Ym38x6Patch>,  // Program Change受信後はbuild_patch()の代わりにこれを使う
 }
 
 /// オペレーター単位パラメーター一式（11個）。`Ym38x6Params`側で`[OperatorVstParams; 4]`として
@@ -370,6 +376,9 @@ impl Default for Ym38x6Plugin {
             data_entry_msb: 0,
             data_entry_lsb: 0,
             operator_f_number_override: [F_NUMBER_CENTER; 4],
+            bank_select_msb: 0,
+            bank_select_lsb: 0,
+            program_patch: None,
         }
     }
 }
@@ -646,6 +655,9 @@ impl Plugin for Ym38x6Plugin {
         self.data_entry_msb = 0;
         self.data_entry_lsb = 0;
         self.operator_f_number_override = [F_NUMBER_CENTER; 4];
+        self.bank_select_msb = 0;
+        self.bank_select_lsb = 0;
+        self.program_patch = None;
     }
 
     fn process(
@@ -662,7 +674,7 @@ impl Plugin for Ym38x6Plugin {
             self.last_algorithm = algorithm;
         }
 
-        let patch = self.build_patch();
+        let patch = self.program_patch.unwrap_or_else(|| self.build_patch());
         self.engine.set_patch(patch);
 
         // 発音中チャンネルへDAWオートメーションの変更とAT/Poly AT Destinationの加算を反映する
@@ -776,6 +788,12 @@ impl Plugin for Ym38x6Plugin {
                 NoteEvent::PolyPressure { note, pressure, .. } => {
                     self.poly_pressure.insert(note, cc_to_u8(pressure));
                 }
+                // Program Change：CC0/CC32で選択中のバンクと合わせ、暫定プレースホルダーパッチを
+                // 選択する（VST3では届かない。CLAPのみ。MidiConfig::MidiCCsの仕様）
+                NoteEvent::MidiProgramChange { program, .. } => {
+                    let bank = (self.bank_select_msb as u16) * 128 + self.bank_select_lsb as u16;
+                    self.program_patch = Some(placeholder_patch(bank, program));
+                }
                 // パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN Destination/Waveform）・
                 // マスターエフェクトセンドレベル（CC91/93）
                 NoteEvent::MidiCC { cc, value, .. } => match cc {
@@ -795,6 +813,9 @@ impl Plugin for Ym38x6Plugin {
                         self.effective_lfo_delay = cc_to_u8(value);
                         self.apply_performance_lfo_to_active();
                     }
+                    // Bank Select（CC0=MSB, CC32=LSB）：Program Change時のバンク決定に使う
+                    0 => self.bank_select_msb = cc_to_u7(value),
+                    32 => self.bank_select_lsb = cc_to_u7(value),
                     98 => {
                         self.nrpn_lsb = cc_to_u7(value);
                         self.update_rpn_selection(true);

@@ -2,6 +2,7 @@ pub mod algorithm;
 pub mod filter;
 pub mod mapping;
 pub mod operator;
+pub mod preset;
 pub mod tone_lfo;
 pub mod waveform;
 
@@ -13,6 +14,7 @@ use mapping::{feedback_to_scale, frequency_to_note, FM_MODULATION_INDEX_SCALE};
 use operator::Operator;
 // Ym38x6Patch::operators / set_operator_paramsの型として外部に公開する
 pub use operator::OperatorParams;
+pub use preset::placeholder_patch;
 use sound_core::{
     apply_lfo_modulation, convert_wave_32, PerformanceLfo, PerformanceLfoTarget, WaveTable,
 };
