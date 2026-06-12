@@ -5083,6 +5083,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ym38x6-vst"
+version = "0.1.0"
+dependencies = [
+ "nih_plug",
+ "ym38x6-core",
+]
+
+[[package]]
 name = "yoke"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
