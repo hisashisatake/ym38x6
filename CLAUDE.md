@@ -90,6 +90,19 @@ cd gesture-app
 npm run tauri build
 ```
 
+### VST3/CLAPバンドル（wms1-vst / ym38x6-vst）
+
+```powershell
+# cargo-nih-plugが未インストールの場合（初回のみ）
+cargo install --git https://github.com/robbert-vdh/nih-plug.git cargo-nih-plug
+
+# バンドル生成（target\bundled\<crate>.vst3 / .clap が生成される）
+cargo nih-plug bundle wms1-vst --release
+cargo nih-plug bundle ym38x6-vst --release
+```
+
+REAPER等のDAWで動作確認する場合は `target\bundled` をVST plug-in pathsに追加してRe-scanする。
+
 ---
 
 ## アーキテクチャ
