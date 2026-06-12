@@ -1,6 +1,7 @@
 pub mod algorithm;
 pub mod mapping;
 pub mod operator;
+pub mod tone_lfo;
 pub mod waveform;
 
 use std::collections::HashMap;
@@ -11,6 +12,7 @@ use operator::{Operator, OperatorParams};
 use sound_core::{
     apply_lfo_modulation, convert_wave_32, PerformanceLfo, PerformanceLfoTarget, WaveTable,
 };
+use tone_lfo::{ams_to_depth, pms_to_cents_range, ToneLfo};
 use waveform::gen_builtin_waveform;
 
 // 呼び出し側がsound-coreに直接依存しなくて済むようre-export
@@ -81,6 +83,8 @@ struct Channel {
     volume_mod_delta: f32,
     /// 拡張Destination=TlCarrier用：キャリア出力にかかる乗算ゲインのオフセット。
     tl_carrier_mod_delta: f32,
+    /// 音色LFO本体（PMS/AMS×PMD/AMD、spec.md「音色LFO」セクション参照）。
+    tone_lfo: ToneLfo,
 }
 
 impl Channel {
@@ -102,6 +106,7 @@ impl Channel {
             pitch_mod_cents: 0.0,
             volume_mod_delta: 0.0,
             tl_carrier_mod_delta: 0.0,
+            tone_lfo: ToneLfo::new(),
         }
     }
 
@@ -150,6 +155,23 @@ impl Channel {
         }
         for op in self.operators.iter_mut() {
             op.set_pitch_modulation(self.pitch_mod_cents);
+        }
+
+        // 音色LFO（プリセット・NRPNで設定する音作り用、PMS/AMS×PMD/AMD）
+        let tone_lfo_value = self.tone_lfo.tick(
+            sample_rate,
+            self.channel_params.tone_lfo_freq,
+            self.channel_params.tone_lfo_delay,
+        );
+        let tone_pitch_mod_cents = tone_lfo_value
+            * pms_to_cents_range(self.channel_params.pms)
+            * (self.channel_params.tone_lfo_pmd as f32 / 255.0);
+        let tone_amp_mod = tone_lfo_value
+            * ams_to_depth(self.channel_params.ams)
+            * (self.channel_params.tone_lfo_amd as f32 / 255.0);
+        for op in self.operators.iter_mut() {
+            let am = if op.params.am_enable { tone_amp_mod } else { 0.0 };
+            op.set_tone_lfo_modulation(tone_pitch_mod_cents, am);
         }
 
         // アルゴリズム結線に基づく4op合成
@@ -410,5 +432,50 @@ mod tests {
                 assert!(s.is_finite(), "algorithm {algorithm}: non-finite sample {s}");
             }
         }
+    }
+
+    #[test]
+    fn tone_lfo_modulates_output_amplitude_periodically() {
+        let op_params = OperatorParams {
+            tl: 255,
+            ar: 255,
+            d1r: 0,
+            d2r: 0,
+            d1l: 255,
+            rr: 255,
+            mul: 16,
+            dt1: 128,
+            ksr: 0,
+            am_enable: true,
+            velocity_sensitivity: 0,
+            waveform: 0,
+        };
+        let mut patch = Ym38x6Patch::default();
+        patch.operators = [op_params; 4];
+        patch.channel.algorithm = 7; // 全並列
+        patch.channel.tone_lfo_freq = 200; // 速めのLFO（テストを短時間で完結させる）
+        patch.channel.tone_lfo_pmd = 255;
+        patch.channel.tone_lfo_amd = 255;
+        patch.channel.pms = 255;
+        patch.channel.ams = 255;
+
+        let mut engine = Ym38x6Engine::new(44100.0);
+        engine.note_on_with_velocity(440.0, 127, patch);
+
+        let mut buf = vec![0.0f32; 4410]; // 0.1秒（音色LFO数周期分）
+        engine.render(&mut buf, 1);
+
+        // ウィンドウごとの最大振幅を比較し、音色LFOのAMにより振幅が周期的に変化することを確認
+        let window = 200;
+        let peaks: Vec<f32> = buf
+            .chunks(window)
+            .map(|chunk| chunk.iter().fold(0.0f32, |a, &b| a.max(b.abs())))
+            .collect();
+
+        let max_peak = peaks.iter().cloned().fold(0.0f32, f32::max);
+        let min_peak = peaks.iter().cloned().fold(f32::MAX, f32::min);
+
+        assert!(max_peak > 0.5, "expected a loud window: max_peak={max_peak}");
+        assert!(min_peak < max_peak * 0.6, "expected amplitude to vary with LFO: min={min_peak} max={max_peak}");
     }
 }
