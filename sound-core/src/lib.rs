@@ -102,6 +102,17 @@ pub fn gen_triangle() -> WaveTable {
     t
 }
 
+/// Build a wave table from an arbitrary waveform function.
+/// `f` maps phase (0.0–1.0) to amplitude (-1.0–1.0); out-of-range values are clamped.
+pub fn gen_from_fn(f: impl Fn(f32) -> f32) -> WaveTable {
+    let mut t = WaveTable::new();
+    for i in 0..WAVE_SIZE {
+        let phase = i as f32 / WAVE_SIZE as f32;
+        t.data[i] = linear_to_log(f(phase).clamp(-1.0, 1.0));
+    }
+    t
+}
+
 /// Convert 32 × i8 user wave input to internal 1024-entry log format.
 pub fn convert_wave_32(input: &[i8; 32]) -> WaveTable {
     let mut t = WaveTable::new();
@@ -174,5 +185,14 @@ mod tests {
         let input = [0i8; 32];
         let t = convert_wave_32(&input);
         assert_eq!(t.len(), WAVE_SIZE);
+    }
+
+    #[test]
+    fn gen_from_fn_matches_gen_sine() {
+        let sine = gen_sine();
+        let from_fn = gen_from_fn(|p| (2.0 * std::f32::consts::PI * p).sin());
+        for i in 0..WAVE_SIZE {
+            assert!((sine.sample_at(i) - from_fn.sample_at(i)).abs() < 1e-6);
+        }
     }
 }
