@@ -59,6 +59,13 @@ impl FilterType {
 
 // ---------------------------------------------------------------------------
 // SVF（State Variable Filter）
+//
+// 内部の計算式（ic1eq/ic2eq、g/k/a1/a2/a3、v1/v2/v3）は、Andrew Simper(Cytomic)の
+// 技術文書「SvfLinearTrapOptimised2.pdf」（Solving the continuous SVF equations
+// using a trapezoidal integrator）に掲載されているTPT(Topology-Preserving Transform)
+// 型SVFの参考実装を基にした。
+// https://cytomic.com/files/dsp/SvfLinearTrapOptimised2.pdf
+// 出典の詳細は THIRD_PARTY_NOTICES.md を参照。
 // ---------------------------------------------------------------------------
 
 /// TPT（Topology-Preserving Transform）型SVF（Andrew Simper,通称Cytomic SVF）。
