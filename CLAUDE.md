@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 このファイルはClaude Codeがym38x6リポジトリで作業する際のガイドです。
-設計の詳細は [spec.md](spec.md) を参照。
+設計の詳細は [spec.md](spec.md)（全体像）/ [spec-sound.md](spec-sound.md)（音源エンジン）/ [spec-app.md](spec-app.md)（作曲支援アプリUI）を参照。
 
 ## 設計経緯
 詳細な議論の経緯は `docs/session_history.txt` を参照。
