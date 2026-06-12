@@ -207,7 +207,7 @@ mod tests {
         assert_eq!(op.env_phase, EnvPhase::Decay1);
 
         // Decay1 → Decay2
-        for _ in 0..200 {
+        for _ in 0..400 {
             if op.env_phase != EnvPhase::Decay1 {
                 break;
             }

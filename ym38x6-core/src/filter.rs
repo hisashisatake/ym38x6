@@ -268,7 +268,7 @@ mod tests {
         }
         assert_eq!(eg.phase, FilterEgPhase::Decay);
 
-        for _ in 0..200 {
+        for _ in 0..400 {
             if eg.phase != FilterEgPhase::Decay {
                 break;
             }

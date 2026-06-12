@@ -28,25 +28,35 @@ pub fn tl_to_gain(tl: u8) -> f32 {
 }
 
 /// レート値(0〜255)→1サンプルあたりのEG変化量。
-/// rate=0→t_max（最遅）、rate=255→t_min（最速）の指数マッピング。
+/// rate=0は特殊値で「変化なし」（OPM/OPNのAR=0/D1R=0/D2R=0と同じフリーズ状態）。
+/// rate=1〜255はt_max（rate=1、最遅）〜t_min（rate=255、最速）の指数マッピング。
 fn rate_to_delta(rate: u8, sample_rate: f32, t_min: f32, t_max: f32) -> f32 {
-    let t = t_min * (t_max / t_min).powf(1.0 - rate as f32 / 255.0);
+    if rate == 0 {
+        return 0.0;
+    }
+    let t = t_min * (t_max / t_min).powf(1.0 - (rate as f32 - 1.0) / 254.0);
     1.0 / (t * sample_rate)
 }
 
-/// AR: 0.5ms〜2s（暫定）。
+/// AR: 0.68ms〜20.2秒。OPM AR(5bit)のreg=31〜1(eg_rate=62〜2、KSRなし)の理論値が基準。
+/// reg=31(eg_rate=62)はキーオン時に瞬時attenuation=0となる特殊仕様だが、
+/// 増分テーブルの値自体はreg=30(eg_rate=60)と同一のため0.68msを採用。
+/// rate=0はreg=0相当のフリーズ（発音しない）。
 pub fn ar_to_delta(rate: u8, sample_rate: f32) -> f32 {
-    rate_to_delta(rate, sample_rate, 0.0005, 2.0)
+    rate_to_delta(rate, sample_rate, 0.00068, 20.2)
 }
 
-/// D1R/D2R: 1ms〜10s（暫定）。
+/// D1R/D2R/RR: 8.71ms〜284.9秒。OPM D1R/D2R(5bit)のreg=31〜1、およびRR(4bit)の
+/// reg=15〜0の理論値が基準（KSRなし、両者ともeg_rateの範囲が一致するため共通）。
+/// rate=0はD1R/D2R=0相当のフリーズ（サスティンレベルを無限保持）。
 pub fn decay_to_delta(rate: u8, sample_rate: f32) -> f32 {
-    rate_to_delta(rate, sample_rate, 0.001, 10.0)
+    rate_to_delta(rate, sample_rate, 0.00871, 284.9)
 }
 
-/// RR: 1ms〜5s（暫定）。
+/// RR: [decay_to_delta]と同一の理論範囲（8.71ms〜284.9秒）。
+/// rate=0はOPMのRRレジスタには無い「リリースしない」拡張。
 pub fn rr_to_delta(rate: u8, sample_rate: f32) -> f32 {
-    rate_to_delta(rate, sample_rate, 0.001, 5.0)
+    rate_to_delta(rate, sample_rate, 0.00871, 284.9)
 }
 
 /// SL値(0〜255)→サスティンレベル比率(0.0〜1.0)。2乗カーブで減衰感を表現（暫定）。
@@ -133,20 +143,25 @@ mod tests {
     #[test]
     fn ar_to_delta_bounds() {
         let sr = 44100.0;
-        let fast = ar_to_delta(255, sr);
-        let slow = ar_to_delta(0, sr);
-        assert!((fast - 1.0 / (0.0005 * sr)).abs() < 1e-9);
-        assert!((slow - 1.0 / (2.0 * sr)).abs() < 1e-9);
-        assert!(fast > slow);
+        // rate=0はフリーズ（変化なし）
+        assert_eq!(ar_to_delta(0, sr), 0.0);
+        let slowest = ar_to_delta(1, sr);
+        let fastest = ar_to_delta(255, sr);
+        assert!((slowest - 1.0 / (20.2 * sr)).abs() < 1e-9);
+        assert!((fastest - 1.0 / (0.00068 * sr)).abs() < 1e-9);
+        assert!(fastest > slowest);
     }
 
     #[test]
     fn decay_and_release_to_delta_bounds() {
         let sr = 44100.0;
-        assert!((decay_to_delta(255, sr) - 1.0 / (0.001 * sr)).abs() < 1e-9);
-        assert!((decay_to_delta(0, sr) - 1.0 / (10.0 * sr)).abs() < 1e-9);
-        assert!((rr_to_delta(255, sr) - 1.0 / (0.001 * sr)).abs() < 1e-9);
-        assert!((rr_to_delta(0, sr) - 1.0 / (5.0 * sr)).abs() < 1e-9);
+        // rate=0はフリーズ（変化なし）
+        assert_eq!(decay_to_delta(0, sr), 0.0);
+        assert_eq!(rr_to_delta(0, sr), 0.0);
+        assert!((decay_to_delta(255, sr) - 1.0 / (0.00871 * sr)).abs() < 1e-9);
+        assert!((decay_to_delta(1, sr) - 1.0 / (284.9 * sr)).abs() < 1e-9);
+        assert!((rr_to_delta(255, sr) - 1.0 / (0.00871 * sr)).abs() < 1e-9);
+        assert!((rr_to_delta(1, sr) - 1.0 / (284.9 * sr)).abs() < 1e-9);
     }
 
     #[test]
