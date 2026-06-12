@@ -125,6 +125,10 @@ struct Channel {
     feedback_buffer: f32,
     /// KSR計算用のノート番号（Note-On時の周波数から近似）。
     note: u8,
+    /// OP単位キーオン/オフ（CC102〜105）でのリトリガー用に保持するNote-On時の周波数。
+    base_frequency: f32,
+    /// OP単位キーオン/オフでのリトリガー用に保持するNote-On時のベロシティ。
+    velocity: u8,
     perf_lfo: PerformanceLfo,
     lfo_destination: Ym38x6LfoDestination,
     lfo_depth: f32,
@@ -155,6 +159,8 @@ impl Channel {
             channel_params: patch.channel,
             feedback_buffer: 0.0,
             note,
+            base_frequency: frequency,
+            velocity,
             perf_lfo: PerformanceLfo::new(),
             lfo_destination: Ym38x6LfoDestination::default(),
             lfo_depth: 0.0,
@@ -187,6 +193,21 @@ impl Channel {
             op.note_off();
         }
         self.filter_eg.note_off();
+    }
+
+    /// CC102〜105（≧64）：指定オペレーター(0〜3)をNote-On時の周波数/ベロシティでキーオンする。
+    fn note_on_operator(&mut self, op_index: usize) {
+        self.operators[op_index].note_on(self.base_frequency, self.velocity);
+    }
+
+    /// CC102〜105（<64）：指定オペレーター(0〜3)をキーオフする。
+    /// Op3（op_index==3）はマスターのため、チャンネル全体をキーオフする（spec-sound.md参照）。
+    fn note_off_operator(&mut self, op_index: usize) {
+        if op_index == 3 {
+            self.note_off();
+        } else {
+            self.operators[op_index].note_off();
+        }
     }
 
     fn is_idle(&self) -> bool {
@@ -366,6 +387,21 @@ impl Ym38x6Engine {
         }
     }
 
+    /// CC102〜105（≧64）：指定チャンネルの指定オペレーター(0〜3)をキーオンする。
+    pub fn note_on_operator(&mut self, channel: usize, op_index: usize) {
+        if let Some(ch) = self.channels.get_mut(&channel) {
+            ch.note_on_operator(op_index);
+        }
+    }
+
+    /// CC102〜105（<64）：指定チャンネルの指定オペレーター(0〜3)をキーオフする。
+    /// op_index==3はOp3=マスターのためチャンネル全体をキーオフする。
+    pub fn note_off_operator(&mut self, channel: usize, op_index: usize) {
+        if let Some(ch) = self.channels.get_mut(&channel) {
+            ch.note_off_operator(op_index);
+        }
+    }
+
     /// スロット8〜255にユーザー定義波形をロードする（wms1-coreと同一シグネチャ）。
     pub fn set_user_wave(&mut self, slot: u8, input: &[i8; 32]) {
         assert!(slot >= 8, "slots 0-7 are reserved for builtin waves");
@@ -460,6 +496,38 @@ mod tests {
         let mut buf = vec![0.0f32; 512];
         engine.render(&mut buf, 1);
         assert!(buf.iter().any(|&s| s != 0.0), "expected non-silent output");
+    }
+
+    #[test]
+    fn note_off_operator_silences_single_op_and_note_on_operator_retriggers() {
+        let mut engine = Ym38x6Engine::new(44100.0);
+        let ch = engine.note_on_with_velocity(440.0, 127, loud_patch(0));
+
+        engine.note_off_operator(ch, 0);
+        // チャンネル全体は他のOpが鳴り続けるためidleにならない
+        assert!(!engine.channels[&ch].is_idle());
+
+        // rr=255（最速リリース）でOp0が即座にidleになる
+        let mut buf = vec![0.0f32; 100];
+        engine.render(&mut buf, 1);
+        assert!(engine.channels[&ch].operators[0].is_idle());
+
+        // Op0を再キーオン → idleではなくなる
+        engine.note_on_operator(ch, 0);
+        assert!(!engine.channels[&ch].operators[0].is_idle());
+    }
+
+    #[test]
+    fn note_off_operator_on_op3_master_removes_channel() {
+        let mut engine = Ym38x6Engine::new(44100.0);
+        let ch = engine.note_on_with_velocity(440.0, 127, loud_patch(0));
+
+        engine.note_off_operator(ch, 3);
+
+        // Op3（マスター）キーオフ→全OP強制キーオフ、rr=255の高速リリースで1秒以内に収束
+        let mut buf = vec![0.0f32; 44100];
+        engine.render(&mut buf, 1);
+        assert!(!engine.channels.contains_key(&ch), "Op3 key-off should remove the channel");
     }
 
     #[test]

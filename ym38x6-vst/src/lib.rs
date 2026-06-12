@@ -820,6 +820,30 @@ impl Plugin for Ym38x6Plugin {
                     }
                     91 => self.effects.set_reverb_send(cc_to_u8(value)),
                     93 => self.effects.set_chorus_send(cc_to_u8(value)),
+                    // Operator Key On/Off（CC102〜105、≧64でキーオン/<64でキーオフ、spec-sound.md参照）
+                    102..=105 => {
+                        let op_index = (cc - 102) as usize;
+                        let key_on = cc_to_u7(value) >= 64;
+                        if op_index == 3 && !key_on {
+                            // Op3（マスター）キーオフ：そのノートのNote-Off相当としてnote_channelsから除去する
+                            let notes: Vec<u8> = self.note_channels.keys().copied().collect();
+                            for note in notes {
+                                if let Some(ch_id) = self.note_channels.remove(&note) {
+                                    self.engine.note_off_operator(ch_id, 3);
+                                }
+                                self.poly_pressure.remove(&note);
+                            }
+                        } else {
+                            let channels: Vec<usize> = self.note_channels.values().copied().collect();
+                            for ch_id in channels {
+                                if key_on {
+                                    self.engine.note_on_operator(ch_id, op_index);
+                                } else {
+                                    self.engine.note_off_operator(ch_id, op_index);
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}
