@@ -72,14 +72,14 @@ ym38x6/                  ← ワークスペースルート
 
   sound-core/            ← 基盤ライブラリ（WaveTable・AdsrParams・SoundEngineトレイト）
     Cargo.toml
-    src/lib.rs             ← nih-plug・Tauri・cpal に無依存な純粋Rustロジック
+    src/lib.rs             ← nice-plug・Tauri・cpal に無依存な純粋Rustロジック
                              波形変換パイプライン（32サンプルi8 → 1024サンプル対数フォーマット）
 
   wms1-core/             ← WMS-1エンジン実装（sound-coreに依存）
     Cargo.toml
     src/lib.rs             ← Wms1Engine（波形オシレーター + ADSRエンベロープ + チャンネル管理）
 
-  wms1-vst/              ← WMS-1 VST3/CLAPプラグイン（nih-plug）
+  wms1-vst/              ← WMS-1 VST3/CLAPプラグイン（nice-plug）
 
   ym38x6-core/           ← 38x6 FMエンジン実装（sound-coreに依存）
     Cargo.toml
@@ -91,7 +91,7 @@ ym38x6/                  ← ワークスペースルート
     src/tone_lfo.rs        ← 音色LFO
     src/filter.rs          ← SVF + Filter EG
 
-  ym38x6-vst/            ← 38x6 VST3/CLAPプラグイン（nih-plug）
+  ym38x6-vst/            ← 38x6 VST3/CLAPプラグイン（nice-plug）
 
   gesture-app/           ← 作曲支援デスクトップアプリ（メイン開発対象）
     package.json
@@ -115,7 +115,7 @@ ym38x6/                  ← ワークスペースルート
 アプリ:         Tauri（VST3/CLAP両対応）
 音声出力:       cpal（デスクトップ）/ Core Audio（iOS、将来）
 参照実装:       ymfm（C++、BSD 3-Clause）
-VSTプラグイン:  nih-plug（wms1-vst・ym38x6-vstともに実装済み）
+VSTプラグイン:  nice-plug（wms1-vst・ym38x6-vstともに実装済み）
 ターゲット:     Windowsデスクトップ → タブレット（iOS/Android）→ VST
 ```
 

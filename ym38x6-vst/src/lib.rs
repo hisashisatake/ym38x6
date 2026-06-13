@@ -1,4 +1,4 @@
-use nih_plug::prelude::*;
+use nice_plug::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,7 +38,7 @@ const DEFAULT_CHORUS_MOD_DEPTH: u8 = 128;
 const DEFAULT_CHORUS_FEEDBACK: u8 = 0;
 const DEFAULT_CHORUS_SEND_TO_REVERB: u8 = 0;
 
-/// Algorithmのデフォルト値（NRPN(0,9)併用のnih-plugパラメーター、`ChannelParams::default()`の内部初期値と一致）
+/// Algorithmのデフォルト値（NRPN(0,9)併用のnice-plugパラメーター、`ChannelParams::default()`の内部初期値と一致）
 const DEFAULT_ALGORITHM: u8 = 0;
 
 /// MIDI CC値（0.0〜1.0正規化）を本プロジェクトの内部表現（0〜255）に変換
@@ -147,7 +147,7 @@ struct Ym38x6Plugin {
     note_channels: HashMap<u8, usize>, // MIDIノート番号 → エンジンチャンネルID
     render_buffer: Vec<f32>, // プロセスコールバック用インターリーブ作業バッファ
     sample_rate: f32,
-    // Algorithm：NRPN(0,9)に加えてnih-plugのチャンネル単位パラメーターとしても公開する
+    // Algorithm：NRPN(0,9)に加えてnice-plugのチャンネル単位パラメーターとしても公開する
     // （last_algorithmで差分検知、process()参照）。
     algorithm: u8,
     // NRPN専用パラメーター（DAWオートメーション非公開、3.3.4でNRPN(0,10)〜(0,15)から配線）。
@@ -184,10 +184,10 @@ struct Ym38x6Plugin {
     nrpn_lsb: u8,
     rpn_selection: RpnSelection,
 
-    // Algorithmの「前回ブロックで適用したnih-plug値」（1シャドウ差分検知方式、下記マスター5パラメーターと同型）
+    // Algorithmの「前回ブロックで適用したnice-plug値」（1シャドウ差分検知方式、下記マスター5パラメーターと同型）
     last_algorithm: u8,
 
-    // マスター単位5パラメーターの「前回ブロックで適用したnih-plug値」（1シャドウ差分検知方式）
+    // マスター単位5パラメーターの「前回ブロックで適用したnice-plug値」（1シャドウ差分検知方式）
     last_reverb_time: u8,
     last_chorus_mod_rate: u8,
     last_chorus_mod_depth: u8,
@@ -757,7 +757,7 @@ impl Plugin for Ym38x6Plugin {
 
         // マスター単位5パラメーター：DAWオートメーションで値が変化した場合のみeffectsへ反映する。
         // NRPN(0,4)〜(0,8)はeffectsへ直接書き込まれ、ここでの値が前回と同じ間は上書きされない
-        // （差分検知方式。NRPNの変更はnih-plug側のパラメーター表示には反映されない）。
+        // （差分検知方式。NRPNの変更はnice-plug側のパラメーター表示には反映されない）。
         let reverb_time = self.params.reverb_time.value() as u8;
         if reverb_time != self.last_reverb_time {
             self.effects.set_reverb_time(reverb_time);
@@ -919,7 +919,7 @@ impl Plugin for Ym38x6Plugin {
         self.engine.render(buf, num_channels);
         self.effects.process(buf, num_channels);
 
-        // インターリーブ → nih-plugのチャンネル分離レイアウトに変換
+        // インターリーブ → nice-plugのチャンネル分離レイアウトに変換
         let output_slices = buffer.as_slice();
         for ch in 0..num_channels {
             for s in 0..num_samples {
@@ -950,5 +950,5 @@ impl Vst3Plugin for Ym38x6Plugin {
     ];
 }
 
-nih_export_clap!(Ym38x6Plugin);
-nih_export_vst3!(Ym38x6Plugin);
+nice_export_clap!(Ym38x6Plugin);
+nice_export_vst3!(Ym38x6Plugin);

@@ -49,13 +49,13 @@ ym38x6/
   spec.md              ← 設計仕様書
   sound-core/          ← WaveTable・AdsrParams・SoundEngineトレイト（基盤ライブラリ）
   wms1-core/           ← WMS-1エンジン実装（sound-coreに依存）
-  wms1-vst/            ← WMS-1 VST3/CLAPプラグイン（nih-plug）
+  wms1-vst/            ← WMS-1 VST3/CLAPプラグイン（nice-plug）
   gesture-app/         ← 作曲支援Tauriアプリ
     src-tauri/         ← Rustバックエンド（cpalで音声出力）
     src/               ← フロントエンド
 ```
 
-`sound-core` と `wms1-core` はnih-plugにもTauriにも依存しない純粋なRustライブラリ。
+`sound-core` と `wms1-core` はnice-plugにもTauriにも依存しない純粋なRustライブラリ。
 音源エンジンの変更はこの2クレートに閉じる。
 
 ---
@@ -93,12 +93,12 @@ npm run tauri build
 ### VST3/CLAPバンドル（wms1-vst / ym38x6-vst）
 
 ```powershell
-# cargo-nih-plugが未インストールの場合（初回のみ）
-cargo install --git https://github.com/robbert-vdh/nih-plug.git cargo-nih-plug
+# cargo-nice-plugが未インストールの場合（初回のみ）
+cargo install cargo-nice-plug
 
 # バンドル生成（target\bundled\<crate>.vst3 / .clap が生成される）
-cargo nih-plug bundle wms1-vst --release
-cargo nih-plug bundle ym38x6-vst --release
+cargo nice-plug bundle wms1-vst --release
+cargo nice-plug bundle ym38x6-vst --release
 ```
 
 REAPER等のDAWで動作確認する場合は `target\bundled` をVST plug-in pathsに追加してRe-scanする。
@@ -154,7 +154,8 @@ stream = device.build_output_stream(&config, move |output: &mut [f32], _| {
 
 ## 開発方針
 
-- `sound-core` と `wms1-core` は常にnih-plug・Tauri・cpalに無依存を保つ
+- `sound-core` と `wms1-core` は常にnice-plug・Tauri・cpalに無依存を保つ
 - 波形フォーマットはWMS-1/38x6で共通（1024×uint16_t対数）。変換パイプラインはコアに実装
 - パラメーターは全て0〜255（8bit）統一。例外は周波数（オクターブ3bit + F-Number 13bit = 16bit、常にOP単位×4）とMUL（0〜15、OPM/OPN/OPQ/OPZ共通のMultiple 4bitに準拠）
 - `sound-core`/`wms1-core`に新機能を実装したら、同じタイミングで`wms1-vst`（該当する機能があれば将来の`ym38x6-vst`も）に配線し、VST単体でも機能が使える状態を保つ。MIDI CC/RPN/NRPNの受信処理やパラメーター追加など、VST側対応が必要な場合は実装範囲に含める
+- VST3/CLAPプラグインフレームワークはnice-plug（nih-plugのフォーク、https://codeberg.org/RustAudio/nice-plug ）を使用する

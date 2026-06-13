@@ -1,4 +1,4 @@
-use nih_plug::prelude::*;
+use nice_plug::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use wms1_core::{AdsrParams, ChorusType, LfoDestination, LfoWaveform, MasterEffects, ReverbType,
@@ -79,7 +79,7 @@ struct Wms1Plugin {
     nrpn_msb: u8,
     nrpn_lsb: u8,
     rpn_selection: RpnSelection,
-    // マスター単位5パラメーターの「前回ブロックで適用したnih-plug値」。
+    // マスター単位5パラメーターの「前回ブロックで適用したnice-plug値」。
     // NRPN(0,4)〜(0,8)はeffectsへ直接書き込むため、ここと一致している間は
     // process()側からの再適用をスキップしてNRPN設定値を保持する（差分検知方式）。
     last_reverb_time: u8,
@@ -331,7 +331,7 @@ impl Plugin for Wms1Plugin {
 
         // マスター単位5パラメーター：DAWオートメーションで値が変化した場合のみeffectsへ反映する。
         // NRPN(0,4)〜(0,8)はeffectsへ直接書き込まれ、ここでの値が前回と同じ間は上書きされない
-        // （差分検知方式。NRPNの変更はnih-plug側のパラメーター表示には反映されない）。
+        // （差分検知方式。NRPNの変更はnice-plug側のパラメーター表示には反映されない）。
         let reverb_time = self.params.reverb_time.value() as u8;
         if reverb_time != self.last_reverb_time {
             self.effects.set_reverb_time(reverb_time);
@@ -410,7 +410,7 @@ impl Plugin for Wms1Plugin {
         self.engine.render(buf, num_channels);
         self.effects.process(buf, num_channels);
 
-        // インターリーブ → nih-plugのチャンネル分離レイアウトに変換
+        // インターリーブ → nice-plugのチャンネル分離レイアウトに変換
         let output_slices = buffer.as_slice();
         for ch in 0..num_channels {
             for s in 0..num_samples {
@@ -441,5 +441,5 @@ impl Vst3Plugin for Wms1Plugin {
     ];
 }
 
-nih_export_clap!(Wms1Plugin);
-nih_export_vst3!(Wms1Plugin);
+nice_export_clap!(Wms1Plugin);
+nice_export_vst3!(Wms1Plugin);

@@ -16,13 +16,13 @@ Inspired by Ryu Umemoto's YM-2609, which explored a similar "what if" premise us
 ym38x6/
   sound-core/         # Core primitives — WaveTable, AdsrParams, SoundEngine trait
   wms1-core/          # WMS-1 engine implementation (depends on sound-core)
-  wms1-vst/           # WMS-1 VST3/CLAP plugin (nih-plug)
+  wms1-vst/           # WMS-1 VST3/CLAP plugin (nice-plug)
   gesture-app/        # Composition app (Tauri v2, Windows desktop)
     src/              # Frontend: calibration + gesture UI (HTML/JS)
     src-tauri/        # Backend: cpal WASAPI output, Tauri commands
 ```
 
-`sound-core` and `wms1-core` have zero dependencies on nih-plug, Tauri, or cpal. The audio engine is fully isolated.
+`sound-core` and `wms1-core` have zero dependencies on nice-plug, Tauri, or cpal. The audio engine is fully isolated.
 
 ## Sound Engine
 
@@ -83,7 +83,7 @@ Selectable handling for notes outside the current scale:
 | 3 | 38x6 FM engine, waveform selection, detune |
 | 4 | Per-operator F-Number, per-operator key-on |
 | 5 | Parameter UI, preset save/load, GM2 Bank 0 program set via ML-based tone generation (`ym38x6-ml`) |
-| 6 | VST3/CLAP plugin via nih-plug (optional) |
+| 6 | VST3/CLAP plugin via nice-plug (optional) |
 | 7 | Scale detection / avoid note handling |
 | 8 | Tablet support (Tauri v2 iOS/Android) |
 | 9 | Algorithm routing extension (SY77-style, optional) |
