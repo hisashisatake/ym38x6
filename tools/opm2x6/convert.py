@@ -191,7 +191,7 @@ def convert_channel(ch_reg, lfo_reg):
     }
 
 
-def convert_voice(voice, operator_order):
+def convert_patch(voice, operator_order):
     ch = voice["ch"] or [0, 0, 0, 0, 0, 120, 0]
     lfo = voice["lfo"] or [0, 0, 0, 0, 0]
     ops = voice["ops"]
@@ -203,12 +203,10 @@ def convert_voice(voice, operator_order):
             raise ValueError(f"voice {voice['number']} ({voice['name']!r}): operator {key} がありません")
         operators.append(convert_operator(op_reg))
 
-    patch = {
+    return {
         "operators": operators,
         "channel": convert_channel(ch, lfo),
     }
-    name = voice["name"] or f"voice{voice['number']}"
-    return {"name": name, "patch": patch}
 
 
 def sanitize_filename(name):
@@ -237,6 +235,18 @@ def main():
         "direct(デフォルト)はM1,C1,M2,C2をそのままOp0-3に対応させる。"
         "アルゴリズム0系の聴感が構造的に違う場合はregister(M1,M2,C1,C2)を試す",
     )
+    parser.add_argument(
+        "--bank",
+        type=int,
+        default=1,
+        help="出力する.38x6ファイルのbank番号（デフォルト1。Bank0はGM2準拠のため通常は使わない）",
+    )
+    parser.add_argument(
+        "--split",
+        action="store_true",
+        help="音色ごとに{\"bank\":..,\"programs\":[entry]}形式の個別ファイルを出力する"
+        "（デフォルトは全音色を1つの{\"bank\":..,\"presets\":[...]}にまとめて出力）",
+    )
     args = parser.parse_args()
 
     output_dir = args.output_dir or args.input.parent
@@ -251,8 +261,9 @@ def main():
     if not voices:
         print(f"warning: {args.input} に @: で始まる音色定義が見つかりませんでした", file=sys.stderr)
 
+    entries = []
     for voice in voices:
-        preset = convert_voice(voice, operator_order)
+        patch = convert_patch(voice, operator_order)
 
         ch = voice["ch"] or [0, 0, 0, 0, 0, 120, 0]
         if ch[5] != 120:
@@ -269,9 +280,20 @@ def main():
                 file=sys.stderr,
             )
 
-        safe_name = sanitize_filename(voice["name"]) or f"voice{voice['number']}"
-        out_path = output_dir / f"{voice['number']:03d}_{safe_name}.38x6"
-        out_path.write_text(json.dumps(preset, indent=2, ensure_ascii=False), encoding="utf-8")
+        name = voice["name"] or f"voice{voice['number']}"
+        entries.append({"program": voice["number"], "name": name, "patch": patch})
+
+    if args.split:
+        for voice, entry in zip(voices, entries):
+            preset_file = {"bank": args.bank, "programs": [entry]}
+            safe_name = sanitize_filename(voice["name"]) or f"voice{voice['number']}"
+            out_path = output_dir / f"{voice['number']:03d}_{safe_name}.38x6"
+            out_path.write_text(json.dumps(preset_file, indent=2, ensure_ascii=False), encoding="utf-8")
+            print(f"wrote {out_path}")
+    elif entries:
+        preset_file = {"bank": args.bank, "presets": entries}
+        out_path = output_dir / f"{args.input.stem}.38x6"
+        out_path.write_text(json.dumps(preset_file, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"wrote {out_path}")
 
 

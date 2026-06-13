@@ -1,7 +1,8 @@
 # opm2x6
 
 VOPM形式の`.opm`音色ファイル（YM2151/OPM）を、38x6の`.38x6`プリセットJSON
-（`Preset { name, patch: Ym38x6Patch }`形式）に変換するツール。
+（`ym38x6-core::PresetFile`形式、`{"bank":.., "presets"/"programs": [...]}`）に
+変換するツール。
 
 実機OPMの音/エミュレーターの音と38x6の音を聴感で比較するための、
 パラメーターの「当てはめ」変換を行う。38x6本体（Cargoワークスペース）には
@@ -18,10 +19,37 @@ docker run --rm -v ${PWD}:/work opm2x6 /work/voice.opm
 
 # 出力先を指定する場合
 docker run --rm -v ${PWD}:/work opm2x6 /work/voice.opm /work/out
+
+# bank番号を指定する場合（デフォルト1）
+docker run --rm -v ${PWD}:/work opm2x6 /work/voice.opm /work/out --bank 2
+
+# 音色ごとに個別ファイルへ分割する場合
+docker run --rm -v ${PWD}:/work opm2x6 /work/voice.opm /work/out --split
 ```
 
-1つの`.opm`ファイルに複数の`@:`音色定義が含まれる場合、それぞれ
-`<番号>_<音色名>.38x6`という名前で出力ディレクトリに書き出される。
+デフォルトでは、`.opm`ファイル内の全`@:`音色定義を1つの`.38x6`ファイル
+（入力ファイル名と同じstem、例: `voice.opm` → `voice.38x6`）にまとめて出力する。
+
+```json
+{
+  "bank": 1,
+  "presets": [
+    { "program": 0, "name": "音色名1", "patch": { "operators": [...], "channel": {...} } },
+    { "program": 1, "name": "音色名2", "patch": { "...": "..." } }
+  ]
+}
+```
+
+`program`は`.opm`の`@:`番号(0-127)を継承する。`bank`は`--bank`で指定する
+（デフォルト1。Bank0はGM2準拠のため通常は使わない）。
+
+`presets`形式は読み込み時にそのbankのプリセットを丸ごと初期化・再構築する
+（[spec-sound.md](../../spec-sound.md)参照）。`--split`を指定すると、音色ごとに
+`<番号>_<音色名>.38x6`という個別ファイルへ分割される。各ファイルは
+`{"bank":.., "programs": [{"program":.., "name":.., "patch":{...}}]}`形式
+（`programs`形式）になる。複数の個別ファイルをpresetsディレクトリに置いても、
+`programs`形式は読み込み時に他ファイルのプリセットを初期化しないため、
+互いのbankを上書きし合わない。
 
 ## オペレーター順序の注意
 
@@ -48,6 +76,8 @@ docker run --rm -v ${PWD}:/work opm2x6 /work/voice.opm /work/out --operator-orde
 
 | .opmフィールド | 範囲 | 38x6パラメーター | 変換 |
 | --- | --- | --- | --- |
+| `@:`番号 | 0-127 | program | 直接コピー（PresetEntryの`program`） |
+| (CLIの`--bank`) | 0-65535 | bank | `.opm`に相当フィールドは無く、`--bank`オプション（デフォルト1）で指定する |
 | AR / D1R / D2R | 0-31 (5bit) | ar / d1r / d2r | `eg_rate=reg*2`として`reg=0`→0(フリーズ)、`reg=1..31`→1..255に等間隔配置 |
 | RR | 0-15 (4bit) | rr | `eg_rate=reg*4+2`として`reg=0..15`→0..255に等間隔配置（実機RRはフリーズしないため0も有限値） |
 | D1L | 0-15 (4bit) | d1l (SL) | `reg=0..14`は-3dB/step、`reg=15`は-93dBへジャンプ（実機の不連続をそのまま反映） |

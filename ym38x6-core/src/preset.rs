@@ -229,16 +229,37 @@ fn lead_1_square_patch() -> Ym38x6Patch {
     patch
 }
 
-/// 1音色分のプリセット（名前 + パッチ本体）。`.38x6`拡張子のJSONファイルとして
-/// 保存・読み込みする。現状は`Ym38x6Patch`のフィールドのみを保存する
-/// （拡張波形スロット(8〜255)データの埋め込みは、当該機能実装後にフォーマット拡張で対応）。
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// 1音色分のプリセット（名前 + パッチ本体）。`PresetBank`が`(bank, program)`ごとに保持する
+/// 内部値型（拡張波形スロット(8〜255)データの埋め込みは、当該機能実装後にフォーマット拡張で対応）。
+#[derive(Clone, Debug)]
 pub struct Preset {
     pub name: String,
     pub patch: Ym38x6Patch,
 }
 
-impl Preset {
+/// `.38x6`ファイル内の1プリセット。`bank`は`PresetFile`側で指定され、
+/// `program`（Program Change、0〜127）でアドレスを持つ。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PresetEntry {
+    pub program: u8,
+    pub name: String,
+    pub patch: Ym38x6Patch,
+}
+
+/// `.38x6`ファイルの内容。`bank`（Bank Select相当、CC0×128+CC32、0〜16383）と、
+/// `presets`/`programs`いずれかのエントリー配列を持つ。
+/// - `Presets`（`{"bank":..,"presets":[...]}`）: ロード時にこの`bank`のプリセットのみ
+///   初期化して、これらのエントリーで再構築する（他bankは保持される）
+/// - `Programs`（`{"bank":..,"programs":[...]}`）: 初期化せず、(bank,program)単位で
+///   これらのエントリーを上書きマージする
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PresetFile {
+    Presets { bank: u16, presets: Vec<PresetEntry> },
+    Programs { bank: u16, programs: Vec<PresetEntry> },
+}
+
+impl PresetFile {
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
     }
@@ -248,16 +269,19 @@ impl Preset {
     }
 }
 
-/// ディレクトリから読み込んだ`.38x6`プリセット集合。ファイル名`b<bank>_p<program>.38x6`から
-/// バンク/プログラム番号を読み取り、Bank Select + Program Changeでのルックアップに使う
-/// （命名規則は暫定。本格的なプリセット管理UIができたら見直す）。
+/// ディレクトリから読み込んだ`.38x6`プリセット集合。Bank Select + Program Changeでの
+/// ルックアップに使う。
 #[derive(Clone, Debug, Default)]
 pub struct PresetBank {
     presets: HashMap<(u16, u8), Preset>,
 }
 
 impl PresetBank {
-    /// 指定ディレクトリ内の`b<bank>_p<program>.38x6`ファイルを読み込む。
+    /// 指定ディレクトリ内の`.38x6`ファイルをファイル名昇順で読み込み、
+    /// `PresetFile::Presets`/`Programs`の意味に従ってプリセット集合を構築する。
+    /// - `Presets`: そのbankのプリセットのみ初期化し、これらのエントリーで再構築する
+    /// - `Programs`: 初期化せず、(bank,program)単位でエントリーを上書きマージする
+    /// 同じ(bank,program)が複数回指定された場合は、後から読み込まれたものが優先する。
     /// ディレクトリが存在しない・読めない場合は空の集合を返す
     /// （ユーザープリセット未作成時はplaceholder_patchへフォールバックするため、エラーにしない）。
     pub fn load_from_dir(dir: &Path) -> Self {
@@ -265,16 +289,30 @@ impl PresetBank {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return Self { presets };
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("38x6") {
-                continue;
-            }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-            let Some((bank, program)) = parse_bank_program(stem) else { continue };
+
+        let mut paths: Vec<_> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("38x6"))
+            .collect();
+        paths.sort();
+
+        for path in paths {
             let Ok(json) = std::fs::read_to_string(&path) else { continue };
-            let Ok(preset) = Preset::from_json(&json) else { continue };
-            presets.insert((bank, program), preset);
+            let Ok(file) = PresetFile::from_json(&json) else { continue };
+            match file {
+                PresetFile::Presets { bank, presets: list } => {
+                    presets.retain(|&(b, _), _| b != bank);
+                    for entry in list {
+                        presets.insert((bank, entry.program), Preset { name: entry.name, patch: entry.patch });
+                    }
+                }
+                PresetFile::Programs { bank, programs: list } => {
+                    for entry in list {
+                        presets.insert((bank, entry.program), Preset { name: entry.name, patch: entry.patch });
+                    }
+                }
+            }
         }
         Self { presets }
     }
@@ -282,13 +320,6 @@ impl PresetBank {
     pub fn get(&self, bank: u16, program: u8) -> Option<&Preset> {
         self.presets.get(&(bank, program))
     }
-}
-
-/// `b<bank>_p<program>`形式のファイル名（拡張子除く）からbank/program番号を取り出す。
-fn parse_bank_program(stem: &str) -> Option<(u16, u8)> {
-    let rest = stem.strip_prefix('b')?;
-    let (bank_str, program_str) = rest.split_once("_p")?;
-    Some((bank_str.parse().ok()?, program_str.parse().ok()?))
 }
 
 #[cfg(test)]
@@ -346,22 +377,32 @@ mod tests {
     }
 
     #[test]
-    fn preset_json_round_trip() {
-        let preset = Preset { name: "Test Patch".to_string(), patch: placeholder_patch(1, 42) };
-        let json = preset.to_json().expect("serialize");
-        let loaded = Preset::from_json(&json).expect("deserialize");
-        assert_eq!(loaded.name, preset.name);
-        assert_eq!(loaded.patch, preset.patch);
+    fn preset_file_presets_json_round_trip() {
+        let file = PresetFile::Presets {
+            bank: 1,
+            presets: vec![
+                PresetEntry { program: 0, name: "A".to_string(), patch: placeholder_patch(1, 0) },
+                PresetEntry { program: 1, name: "B".to_string(), patch: placeholder_patch(1, 1) },
+            ],
+        };
+        let json = file.to_json().expect("serialize");
+        assert!(json.contains("\"bank\""));
+        assert!(json.contains("\"presets\""));
+        let loaded = PresetFile::from_json(&json).expect("deserialize");
+        assert_eq!(loaded, file);
     }
 
     #[test]
-    fn parse_bank_program_valid_and_invalid() {
-        assert_eq!(parse_bank_program("b1_p64"), Some((1, 64)));
-        assert_eq!(parse_bank_program("b0_p0"), Some((0, 0)));
-        assert_eq!(parse_bank_program("invalid"), None);
-        assert_eq!(parse_bank_program("b1"), None);
-        assert_eq!(parse_bank_program("b1_p300"), None); // programはu8範囲外
-        assert_eq!(parse_bank_program("bx_p64"), None);
+    fn preset_file_programs_json_round_trip() {
+        let file = PresetFile::Programs {
+            bank: 1,
+            programs: vec![PresetEntry { program: 5, name: "C".to_string(), patch: placeholder_patch(1, 5) }],
+        };
+        let json = file.to_json().expect("serialize");
+        assert!(json.contains("\"bank\""));
+        assert!(json.contains("\"programs\""));
+        let loaded = PresetFile::from_json(&json).expect("deserialize");
+        assert_eq!(loaded, file);
     }
 
     #[test]
@@ -369,16 +410,23 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ym38x6_preset_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
 
-        let preset = Preset { name: "My Preset".to_string(), patch: placeholder_patch(1, 64) };
-        std::fs::write(dir.join("b1_p64.38x6"), preset.to_json().unwrap()).unwrap();
+        let file = PresetFile::Presets {
+            bank: 1,
+            presets: vec![PresetEntry {
+                program: 64,
+                name: "My Preset".to_string(),
+                patch: placeholder_patch(1, 64),
+            }],
+        };
+        std::fs::write(dir.join("preset.38x6"), file.to_json().unwrap()).unwrap();
         std::fs::write(dir.join("ignore.txt"), "not a preset").unwrap();
 
         let bank = PresetBank::load_from_dir(&dir);
         std::fs::remove_dir_all(&dir).expect("cleanup temp dir");
 
-        let loaded = bank.get(1, 64).expect("b1_p64 should be loaded");
+        let loaded = bank.get(1, 64).expect("preset should be loaded");
         assert_eq!(loaded.name, "My Preset");
-        assert_eq!(loaded.patch, preset.patch);
+        assert_eq!(loaded.patch, placeholder_patch(1, 64));
         assert!(bank.get(0, 0).is_none());
     }
 
@@ -387,5 +435,49 @@ mod tests {
         let dir = std::env::temp_dir().join("ym38x6_preset_test_nonexistent_dir");
         let bank = PresetBank::load_from_dir(&dir);
         assert!(bank.get(0, 0).is_none());
+    }
+
+    #[test]
+    fn preset_bank_load_from_dir_presets_reset_scoped_to_bank_and_programs_merge() {
+        let dir = std::env::temp_dir().join(format!("ym38x6_preset_test_merge_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        let bank1_base = PresetFile::Presets {
+            bank: 1,
+            presets: vec![
+                PresetEntry { program: 0, name: "A".to_string(), patch: placeholder_patch(1, 0) },
+                PresetEntry { program: 1, name: "B".to_string(), patch: placeholder_patch(1, 1) },
+            ],
+        };
+        let bank2_base = PresetFile::Presets {
+            bank: 2,
+            presets: vec![PresetEntry { program: 0, name: "X".to_string(), patch: placeholder_patch(2, 0) }],
+        };
+        let bank1_override = PresetFile::Programs {
+            bank: 1,
+            programs: vec![PresetEntry { program: 1, name: "B2".to_string(), patch: placeholder_patch(1, 1) }],
+        };
+        std::fs::write(dir.join("00_bank1_base.38x6"), bank1_base.to_json().unwrap()).unwrap();
+        std::fs::write(dir.join("01_bank2_base.38x6"), bank2_base.to_json().unwrap()).unwrap();
+        std::fs::write(dir.join("02_bank1_override.38x6"), bank1_override.to_json().unwrap()).unwrap();
+
+        let bank = PresetBank::load_from_dir(&dir);
+        assert_eq!(bank.get(1, 0).unwrap().name, "A");
+        assert_eq!(bank.get(1, 1).unwrap().name, "B2");
+        assert_eq!(bank.get(2, 0).unwrap().name, "X");
+
+        let bank1_reset = PresetFile::Presets {
+            bank: 1,
+            presets: vec![PresetEntry { program: 5, name: "C".to_string(), patch: placeholder_patch(1, 5) }],
+        };
+        std::fs::write(dir.join("03_bank1_reset.38x6"), bank1_reset.to_json().unwrap()).unwrap();
+
+        let bank = PresetBank::load_from_dir(&dir);
+        std::fs::remove_dir_all(&dir).expect("cleanup temp dir");
+
+        assert!(bank.get(1, 0).is_none());
+        assert!(bank.get(1, 1).is_none());
+        assert_eq!(bank.get(1, 5).unwrap().name, "C");
+        assert_eq!(bank.get(2, 0).unwrap().name, "X");
     }
 }
