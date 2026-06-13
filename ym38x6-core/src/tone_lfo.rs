@@ -17,15 +17,33 @@ pub fn tone_lfo_freq_to_hz(freq: u8) -> f32 {
     F_MIN * (F_MAX / F_MIN).powf(freq as f32 / 255.0)
 }
 
-/// PMS(0〜255)→ピッチ変調の最大幅（セント、暫定で±800セント）。
+/// PMS(0〜255)→ピッチ変調の最大幅（セント）。
+/// OPM PMS(3bit、0=オフ・1〜7は+/-5〜+/-700セント、約7.13oct)を踏まえ、pms=0は
+/// 実機PMS=0と同じ「ピッチ変調なし」の特殊値。pms=1〜255は実機PMS=1(+/-5セント)〜
+/// PMS=7(+/-700セント)の理論値を両端アンカーとした指数カーブにマッピングする。
 pub fn pms_to_cents_range(pms: u8) -> f32 {
-    const MAX_CENTS: f32 = 800.0;
-    pms as f32 / 255.0 * MAX_CENTS
+    const MIN_CENTS: f32 = 5.0;
+    const MAX_CENTS: f32 = 700.0;
+    if pms == 0 {
+        return 0.0;
+    }
+    MIN_CENTS * (MAX_CENTS / MIN_CENTS).powf((pms as f32 - 1.0) / 254.0)
 }
 
-/// AMS(0〜255)→振幅変調の最大深さ(0.0〜1.0、暫定)。
+/// AMS(0〜255)→振幅変調の最大深さ(0.0〜1.0)。
+/// OPM AMS(2bit、0=オフ・1〜3は23.9dB〜95.6dB、1段ごとに2倍=2oct)を踏まえ、ams=0は
+/// 実機AMS=0と同じ「振幅変調なし」の特殊値。ams=1〜255は実機AMS=1(23.9dB)〜
+/// AMS=3(95.6dB)の理論値を両端アンカーとした指数カーブでdB値を求め、
+/// depth = 1 - 10^(-dB/20) で線形振幅深度に変換する
+/// (operator.rsのamp_factor = (1 - tone_lfo_amp_mod).clamp(0,1)と整合)。
 pub fn ams_to_depth(ams: u8) -> f32 {
-    ams as f32 / 255.0
+    const MIN_DB: f32 = 23.9;
+    const MAX_DB: f32 = 95.6;
+    if ams == 0 {
+        return 0.0;
+    }
+    let db = MIN_DB * (MAX_DB / MIN_DB).powf((ams as f32 - 1.0) / 254.0);
+    1.0 - 10f32.powf(-db / 20.0)
 }
 
 /// 音色LFO本体：三角波固定（spec.md準拠）+ Delay。
@@ -87,14 +105,35 @@ mod tests {
 
     #[test]
     fn pms_to_cents_range_bounds() {
+        // pms=0はオフ（実機PMS=0=0cents）
         assert_eq!(pms_to_cents_range(0), 0.0);
-        assert!((pms_to_cents_range(255) - 800.0).abs() < 1e-3);
+        // pms=1は実機PMS=1(+/-5cents)、pms=255は実機PMS=7(+/-700cents)
+        assert!((pms_to_cents_range(1) - 5.0).abs() < 1e-3);
+        assert!((pms_to_cents_range(255) - 700.0).abs() < 1e-2);
+        // 指数カーブ：pms=0(オフ)以外は全域で滑らかに増加する
+        assert!(pms_to_cents_range(1) > 0.0);
+        assert!(pms_to_cents_range(64) < pms_to_cents_range(128));
+        assert!(pms_to_cents_range(128) < pms_to_cents_range(192));
+        assert!(pms_to_cents_range(192) < pms_to_cents_range(255));
     }
 
     #[test]
     fn ams_to_depth_bounds() {
+        // ams=0はオフ（実機AMS=0=0dB）
         assert_eq!(ams_to_depth(0), 0.0);
-        assert!((ams_to_depth(255) - 1.0).abs() < 1e-6);
+        // ams=1は実機AMS=1(23.9dB)相当の深度、ams=255は実機AMS=3(95.6dB)相当でほぼ1.0
+        assert!(ams_to_depth(1) > 0.9 && ams_to_depth(1) < 1.0);
+        assert!((ams_to_depth(255) - 1.0).abs() < 1e-3);
+        // 指数カーブ：ams=0(オフ)以外は全域で滑らかに増加する
+        assert!(ams_to_depth(1) > 0.0);
+        assert!(ams_to_depth(64) < ams_to_depth(128));
+        assert!(ams_to_depth(128) < ams_to_depth(192));
+        assert!(ams_to_depth(192) < ams_to_depth(255));
+        // depthは常に0.0〜1.0の範囲内
+        for ams in [0u8, 1, 64, 128, 192, 255] {
+            let d = ams_to_depth(ams);
+            assert!((0.0..=1.0).contains(&d), "ams={ams} depth={d}");
+        }
     }
 
     #[test]
