@@ -205,10 +205,15 @@ struct Ym38x6Plugin {
     data_entry_lsb: u8,                     // CC38 (Data Entry LSB) の最新値
     operator_f_number_override: [u16; 4],   // 各Opの上書き値。初期値F_NUMBER_CENTER（上書きなし）
 
-    // Bank Select（CC0=MSB, CC32=LSB）+ Program Change：暫定プレースホルダーパッチの選択状態
+    // Bank Select（CC0=MSB, CC32=LSB）+ Program Change（CLAP）/ Programパラメーター（VST3/CLAP共通）：
+    // プリセット選択状態
     bank_select_msb: u8,                 // CC0
     bank_select_lsb: u8,                 // CC32
-    program_patch: Option<Ym38x6Patch>,  // Program Change受信後はbuild_patch()の代わりにこれを使う
+    program_patch: Option<Ym38x6Patch>,  // 選択後はbuild_patch()の代わりにこれを使う
+
+    // Programパラメーター（0=Manual/1〜128=Program 0〜127）の「前回ブロックで適用した値」
+    // （1シャドウ差分検知方式、last_algorithmと同型。process()参照）
+    last_program: u8,
 
     // presets_dir()から読み込んだユーザープリセット集合（initialize()で読み込む）
     preset_bank: PresetBank,
@@ -265,6 +270,13 @@ impl Default for OperatorVstParams {
 
 #[derive(Params)]
 struct Ym38x6Params {
+    // ---- プリセット選択（1個） ----
+    // 0=Manual（DAWパラメーター/NRPNで手動チューニングしたパッチを使う、build_patch()）、
+    // 1〜128=Program 0〜127（CC0/CC32で選択中のbankの該当プリセットへ切り替える、process()参照）。
+    // VST3ではMIDI Program Changeが届かないため、こちらが代替の選択手段になる。
+    #[id = "program"]
+    pub program: IntParam,
+
     // ---- チャンネル単位（20個、spec.md MIDI実装方針参照） ----
     #[id = "algorithm"]
     pub algorithm: IntParam,
@@ -327,6 +339,14 @@ struct Ym38x6Params {
 impl Default for Ym38x6Params {
     fn default() -> Self {
         Self {
+            program: IntParam::new("Program", 0, IntRange::Linear { min: 0, max: 128 })
+                .with_value_to_string(Arc::new(|v: i32| {
+                    if v == 0 {
+                        "Manual".to_string()
+                    } else {
+                        format!("Program {}", v - 1)
+                    }
+                })),
             algorithm: IntParam::new("Algorithm", DEFAULT_ALGORITHM as i32, IntRange::Linear { min: 0, max: 7 }),
             feedback: IntParam::new("Feedback", 0, IntRange::Linear { min: 0, max: 255 }),
             lfo_rate: IntParam::new("Perf LFO Rate", 0, IntRange::Linear { min: 0, max: 255 }),
@@ -404,6 +424,7 @@ impl Default for Ym38x6Plugin {
             bank_select_msb: 0,
             bank_select_lsb: 0,
             program_patch: None,
+            last_program: 0,
             preset_bank: PresetBank::default(),
         }
     }
@@ -452,6 +473,18 @@ impl Ym38x6Plugin {
         };
 
         Ym38x6Patch { operators, channel }
+    }
+
+    /// (bank, program)に対応するパッチを解決する（NoteEvent::MidiProgramChange・
+    /// Programパラメーターの両方から使う共通ロジック）。
+    /// 優先順位: ユーザープリセット(.38x6) > GM2 Bank0手動チューニング(該当programのみ)
+    /// > 暫定プレースホルダーパッチ
+    fn patch_for_program(&self, bank: u16, program: u8) -> Ym38x6Patch {
+        self.preset_bank
+            .get(bank, program)
+            .map(|preset| preset.patch)
+            .or_else(|| (bank == 0).then(|| gm2_bank0_patch(program)).flatten())
+            .unwrap_or_else(|| placeholder_patch(bank, program))
     }
 
     /// 指定チャンネルへ現在のパフォーマンスLFO設定を適用する
@@ -685,6 +718,7 @@ impl Plugin for Ym38x6Plugin {
         self.bank_select_msb = 0;
         self.bank_select_lsb = 0;
         self.program_patch = None;
+        self.last_program = 0;
     }
 
     fn process(
@@ -699,6 +733,20 @@ impl Plugin for Ym38x6Plugin {
         if algorithm != self.last_algorithm {
             self.algorithm = algorithm;
             self.last_algorithm = algorithm;
+        }
+
+        // Program：DAWで値が変化した場合のみ反映する（差分検知方式）。
+        // 0=Manualならprogram_patchをクリアしてbuild_patch()に戻し、1〜128ならProgram 0〜127の
+        // パッチをCC0/CC32で選択中のbankから解決する（MidiProgramChangeハンドラと同じロジック）。
+        let program = self.params.program.value() as u8;
+        if program != self.last_program {
+            self.last_program = program;
+            self.program_patch = if program == 0 {
+                None
+            } else {
+                let bank = (self.bank_select_msb as u16) * 128 + self.bank_select_lsb as u16;
+                Some(self.patch_for_program(bank, program - 1))
+            };
         }
 
         let patch = self.program_patch.unwrap_or_else(|| self.build_patch());
@@ -816,18 +864,11 @@ impl Plugin for Ym38x6Plugin {
                     self.poly_pressure.insert(note, cc_to_u8(pressure));
                 }
                 // Program Change：CC0/CC32で選択中のバンクと合わせてパッチを選択する
-                // （VST3では届かない。CLAPのみ。MidiConfig::MidiCCsの仕様）。
-                // 優先順位: ユーザープリセット(.38x6) > GM2 Bank0手動チューニング(該当programのみ)
-                // > 暫定プレースホルダーパッチ
+                // （VST3では届かない。CLAPのみ。MidiConfig::MidiCCsの仕様。VST3では代わりに
+                // Programパラメーターを使う、process()参照）。
                 NoteEvent::MidiProgramChange { program, .. } => {
                     let bank = (self.bank_select_msb as u16) * 128 + self.bank_select_lsb as u16;
-                    let patch = self
-                        .preset_bank
-                        .get(bank, program)
-                        .map(|preset| preset.patch)
-                        .or_else(|| (bank == 0).then(|| gm2_bank0_patch(program)).flatten())
-                        .unwrap_or_else(|| placeholder_patch(bank, program));
-                    self.program_patch = Some(patch);
+                    self.program_patch = Some(self.patch_for_program(bank, program));
                 }
                 // パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN Destination/Waveform）・
                 // マスターエフェクトセンドレベル（CC91/93）
