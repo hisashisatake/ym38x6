@@ -20,10 +20,10 @@ pub fn dt1_to_cents(dt1: u8) -> f32 {
     (dt1 as f32 - 128.0) / 128.0 * DETUNE_RANGE_CENTS
 }
 
-/// TL値(0〜255)→リニアゲイン。255=0dB、0≈-95.6dB（0.375dB/step、暫定）。
+/// TL値(0〜255)→リニアゲイン。実機OPM TL(7bit、0.75dB/step)のreg=0(0dB)〜
+/// reg=127(-95.25dB)をtl=255〜0に厳密アンカーし、dB単位で線形補間する。
 pub fn tl_to_gain(tl: u8) -> f32 {
-    const DB_PER_STEP: f32 = 95.25 / 254.0;
-    let db = (255 - tl as u16) as f32 * -DB_PER_STEP;
+    let db = -95.25 * (255 - tl) as f32 / 255.0;
     10f32.powf(db / 20.0)
 }
 
@@ -46,23 +46,28 @@ pub fn ar_to_delta(rate: u8, sample_rate: f32) -> f32 {
     rate_to_delta(rate, sample_rate, 0.00068, 20.2)
 }
 
-/// D1R/D2R/RR: 8.71ms〜284.9秒。OPM D1R/D2R(5bit)のreg=31〜1、およびRR(4bit)の
-/// reg=15〜0の理論値が基準（KSRなし、両者ともeg_rateの範囲が一致するため共通）。
+/// D1R/D2R: 8.71ms〜284.9秒。OPM D1R/D2R(5bit)のreg=31〜1(eg_rate=62〜2、KSRなし)の理論値が基準。
 /// rate=0はD1R/D2R=0相当のフリーズ（サスティンレベルを無限保持）。
 pub fn decay_to_delta(rate: u8, sample_rate: f32) -> f32 {
     rate_to_delta(rate, sample_rate, 0.00871, 284.9)
 }
 
-/// RR: [decay_to_delta]と同一の理論範囲（8.71ms〜284.9秒）。
-/// rate=0はOPMのRRレジスタには無い「リリースしない」拡張。
+/// RR: 8.71ms〜284.9秒。OPM RR(4bit)のreg=15〜0(eg_rate=62〜2、KSRなし)の理論値が基準。
+/// [decay_to_delta]と同じeg_rate範囲だが、RRは`eg_rate = reg*4+2`でreg=0でも
+/// eg_rate=2となり実機にフリーズが存在しないため、rate=0〜255の全域を指数補間する
+/// （rate=0でも284.9秒で減衰し、無限保持の特殊値は持たない）。
 pub fn rr_to_delta(rate: u8, sample_rate: f32) -> f32 {
-    rate_to_delta(rate, sample_rate, 0.00871, 284.9)
+    let t_min: f32 = 0.00871;
+    let t_max: f32 = 284.9;
+    let t = t_min * (t_max / t_min).powf(1.0 - rate as f32 / 255.0);
+    1.0 / (t * sample_rate)
 }
 
-/// SL値(0〜255)→サスティンレベル比率(0.0〜1.0)。2乗カーブで減衰感を表現（暫定）。
+/// SL値(0〜255)→サスティンレベル比率(0.0〜1.0)。実機OPM SL(4bit)のreg=0(0dB、減衰なし)〜
+/// reg=15(-93dB、ほぼ無音)をsl=255〜0に厳密アンカーし、dB単位で線形補間する。
 pub fn sl_to_level(sl: u8) -> f32 {
-    let x = sl as f32 / 255.0;
-    x * x
+    let db = -93.0 * (255 - sl) as f32 / 255.0;
+    10f32.powf(db / 20.0)
 }
 
 /// KSR値(0〜255)→A4(note=69)からのオクターブ差に対するレート倍率。
@@ -141,7 +146,10 @@ mod tests {
 
     #[test]
     fn tl_to_gain_bounds_and_monotonic() {
+        // tl=255はreg=0相当（0dB、減衰なし）
         assert!((tl_to_gain(255) - 1.0).abs() < 1e-6);
+        // tl=0はreg=127相当（-95.25dB）
+        assert!((tl_to_gain(0) - 10f32.powf(-95.25 / 20.0)).abs() < 1e-9);
         assert!(tl_to_gain(0) > 0.0 && tl_to_gain(0) < tl_to_gain(255));
         assert!(tl_to_gain(128) < tl_to_gain(255));
     }
@@ -159,22 +167,39 @@ mod tests {
     }
 
     #[test]
-    fn decay_and_release_to_delta_bounds() {
+    fn decay_to_delta_bounds() {
         let sr = 44100.0;
         // rate=0はフリーズ（変化なし）
         assert_eq!(decay_to_delta(0, sr), 0.0);
-        assert_eq!(rr_to_delta(0, sr), 0.0);
         assert!((decay_to_delta(255, sr) - 1.0 / (0.00871 * sr)).abs() < 1e-9);
         assert!((decay_to_delta(1, sr) - 1.0 / (284.9 * sr)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rr_to_delta_bounds() {
+        let sr = 44100.0;
+        // rr=0はreg=0相当（284.9秒、フリーズではない）
+        assert!((rr_to_delta(0, sr) - 1.0 / (284.9 * sr)).abs() < 1e-9);
+        // rr=255はreg=15相当（8.71ms）
         assert!((rr_to_delta(255, sr) - 1.0 / (0.00871 * sr)).abs() < 1e-9);
-        assert!((rr_to_delta(1, sr) - 1.0 / (284.9 * sr)).abs() < 1e-9);
+        // 指数カーブ：全域で滑らかに増加する
+        assert!(rr_to_delta(0, sr) < rr_to_delta(64, sr));
+        assert!(rr_to_delta(64, sr) < rr_to_delta(128, sr));
+        assert!(rr_to_delta(128, sr) < rr_to_delta(192, sr));
+        assert!(rr_to_delta(192, sr) < rr_to_delta(255, sr));
     }
 
     #[test]
     fn sl_to_level_bounds() {
-        assert_eq!(sl_to_level(0), 0.0);
+        // sl=255はreg=0相当（0dB、減衰なし）
         assert!((sl_to_level(255) - 1.0).abs() < 1e-6);
-        assert!(sl_to_level(128) < 1.0);
+        // sl=0はreg=15相当（-93dB）
+        assert!((sl_to_level(0) - 10f32.powf(-93.0 / 20.0)).abs() < 1e-9);
+        // 指数カーブ：全域で滑らかに増加する
+        assert!(sl_to_level(0) < sl_to_level(64));
+        assert!(sl_to_level(64) < sl_to_level(128));
+        assert!(sl_to_level(128) < sl_to_level(192));
+        assert!(sl_to_level(192) < sl_to_level(255));
     }
 
     #[test]
