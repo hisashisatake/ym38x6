@@ -376,12 +376,11 @@ mod tests {
     fn placeholder_patch_is_audible() {
         for (bank, program) in [(0u16, 0u8), (0, 64), (1, 42), (128, 127)] {
             let mut engine = Ym38x6Engine::new(44100.0);
-            let ch = engine.note_on_with_velocity(440.0, 127, placeholder_patch(bank, program));
+            engine.note_on_with_velocity(0, 440.0, 127, placeholder_patch(bank, program));
             let mut buf = vec![0.0f32; 512];
             engine.render(&mut buf, 1);
             assert!(buf.iter().all(|&s| s.is_finite()));
             assert!(buf.iter().any(|&s| s != 0.0), "bank={bank} program={program} is silent");
-            let _ = ch;
         }
     }
 
@@ -399,7 +398,7 @@ mod tests {
         for program in [0u8, 4, 80] {
             let mut engine = Ym38x6Engine::new(44100.0);
             let patch = gm2_bank0_patch(program).expect("implemented program");
-            engine.note_on_with_velocity(440.0, 100, patch);
+            engine.note_on_with_velocity(0, 440.0, 100, patch);
 
             let mut buf = vec![0.0f32; 44100];
             engine.render(&mut buf, 1);

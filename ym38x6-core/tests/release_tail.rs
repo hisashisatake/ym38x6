@@ -21,7 +21,8 @@ fn release_tail() {
         println!("\n=== program {program}: {} ===", preset.name);
 
         let mut engine = Ym38x6Engine::new(SAMPLE_RATE);
-        let ch = engine.note_on_with_velocity(440.0, 127, preset.patch);
+        let ch = 0;
+        engine.note_on_with_velocity(ch, 440.0, 127, preset.patch);
 
         // サスティンに達するまで1秒分render
         let mut buf = vec![0.0f32; SAMPLE_RATE as usize];

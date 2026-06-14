@@ -23,13 +23,14 @@ fn sustained_release_patch() -> Ym38x6Patch {
     }
 }
 
-/// リリース中にretrigger_with_velocityすると、リリースの続行を待たずに即座にエンベロープが
-/// カットされ、同じチャンネルIDでAttackから再開する（実機FM音源のKey-On挙動に準拠）。
+/// リリース中の同じチャンネルIDへ再度note_on_with_velocityすると、リリースの続行を待たずに
+/// 即座にエンベロープがカットされ、Attackから再開する（実機FM音源のKey-On挙動に準拠＝同音チョーク）。
 #[test]
-fn retrigger_with_velocity_cuts_release_and_restarts_attack_on_same_channel() {
+fn note_on_with_velocity_chokes_release_and_restarts_attack_on_same_channel() {
     let mut engine = Ym38x6Engine::new(44100.0);
     let patch = sustained_release_patch();
-    let ch = engine.note_on_with_velocity(440.0, 127, patch);
+    let ch = 0;
+    engine.note_on_with_velocity(ch, 440.0, 127, patch);
 
     // AR=255で約30サンプルでenv_level=1.0に到達し、D1L=255・D2R=0でDecay2に固定される
     let mut warmup = vec![0.0f32; 100];
@@ -42,8 +43,8 @@ fn retrigger_with_velocity_cuts_release_and_restarts_attack_on_same_channel() {
     engine.render(&mut release_buf, 1);
     let release_peak = release_buf[900..].iter().fold(0.0f32, |m, &s| m.max(s.abs()));
 
-    // 同じチャンネルIDでretrigger → リリースを即座にカットしてAttackから再開する
-    assert!(engine.retrigger_with_velocity(ch, 440.0, 127, patch));
+    // 同じチャンネルIDへ再度note_on_with_velocity → リリースを即座にカットしてAttackから再開する（チョーク）
+    engine.note_on_with_velocity(ch, 440.0, 127, patch);
 
     let mut after = vec![0.0f32; 200];
     engine.render(&mut after, 1);
@@ -52,23 +53,21 @@ fn retrigger_with_velocity_cuts_release_and_restarts_attack_on_same_channel() {
 
     assert!(
         just_after < release_peak * 0.5,
-        "retrigger should cut the release tail instantly: just_after={just_after}, release_peak={release_peak}"
+        "note_on_with_velocity should choke the release instantly: just_after={just_after}, release_peak={release_peak}"
     );
     assert!(
         after_peak > release_peak,
-        "retrigger should restart Attack toward full level: after_peak={after_peak}, release_peak={release_peak}"
+        "note_on_with_velocity should restart Attack toward full level: after_peak={after_peak}, release_peak={release_peak}"
     );
-
-    // 存在しないチャンネルへのretrigger_with_velocityはfalseを返す
-    assert!(!engine.retrigger_with_velocity(9999, 440.0, 127, patch));
 }
 
-/// SoundEngine::retriggerはカレントパッチを使って同じチャンネルIDでリトリガーする。
+/// SoundEngine::note_onはカレントパッチを使って同じチャンネルIDで同音チョークする。
 #[test]
-fn trait_retrigger_uses_current_patch_on_same_channel() {
+fn trait_note_on_chokes_release_on_same_channel() {
     let mut engine = Ym38x6Engine::new(44100.0);
     engine.set_patch(sustained_release_patch());
-    let ch = engine.note_on(0, 440.0, AdsrParams::default());
+    let ch = 0;
+    engine.note_on(ch, 0, 440.0, AdsrParams::default());
 
     let mut warmup = vec![0.0f32; 100];
     engine.render(&mut warmup, 1);
@@ -79,7 +78,7 @@ fn trait_retrigger_uses_current_patch_on_same_channel() {
     engine.render(&mut release_buf, 1);
     let release_peak = release_buf[900..].iter().fold(0.0f32, |m, &s| m.max(s.abs()));
 
-    assert!(engine.retrigger(ch, 0, 440.0, AdsrParams::default()));
+    engine.note_on(ch, 0, 440.0, AdsrParams::default());
 
     let mut after = vec![0.0f32; 200];
     engine.render(&mut after, 1);
@@ -88,7 +87,4 @@ fn trait_retrigger_uses_current_patch_on_same_channel() {
 
     assert!(just_after < release_peak * 0.5);
     assert!(after_peak > release_peak);
-
-    // 存在しないチャンネルへのretriggerはfalseを返す
-    assert!(!engine.retrigger(9999, 0, 440.0, AdsrParams::default()));
 }

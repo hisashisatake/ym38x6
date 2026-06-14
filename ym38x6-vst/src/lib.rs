@@ -122,7 +122,6 @@ struct Ym38x6Plugin {
     params: Arc<Ym38x6Params>,
     engine: Ym38x6Engine,
     effects: MasterEffects,
-    note_channels: HashMap<u8, usize>, // MIDIノート番号 → エンジンチャンネルID
     render_buffer: Vec<f32>, // プロセスコールバック用インターリーブ作業バッファ
     sample_rate: f32,
     // Algorithm：NRPN(0,9)に加えてnice-plugのチャンネル単位パラメーターとしても公開する
@@ -362,7 +361,6 @@ impl Default for Ym38x6Plugin {
             params: Arc::new(Ym38x6Params::default()),
             engine: Ym38x6Engine::new(DEFAULT_SR),
             effects: MasterEffects::new(DEFAULT_SR),
-            note_channels: HashMap::new(),
             render_buffer: Vec::new(),
             sample_rate: DEFAULT_SR,
             algorithm: DEFAULT_ALGORITHM,
@@ -475,9 +473,8 @@ impl Ym38x6Plugin {
 
     /// 発音中の全チャンネルへ現在のパフォーマンスLFO設定を再適用する
     fn apply_performance_lfo_to_active(&mut self) {
-        let channels: Vec<usize> = self.note_channels.values().copied().collect();
-        for ch in channels {
-            self.apply_performance_lfo(ch);
+        for note in 0u8..128 {
+            self.apply_performance_lfo(note as usize);
         }
     }
 
@@ -487,8 +484,8 @@ impl Ym38x6Plugin {
         let combined = (self.data_entry_msb as u16) * 128 + self.data_entry_lsb as u16;
         let f_number = combined.min(8191);
         self.operator_f_number_override[op_index] = f_number;
-        for &ch_id in self.note_channels.values() {
-            self.engine.set_operator_f_number(ch_id, op_index, f_number);
+        for note in 0u8..128 {
+            self.engine.set_operator_f_number(note as usize, op_index, f_number);
         }
     }
 
@@ -649,7 +646,6 @@ impl Plugin for Ym38x6Plugin {
     }
 
     fn reset(&mut self) {
-        self.note_channels.clear();
         self.engine = Ym38x6Engine::new(self.sample_rate);
         self.effects = MasterEffects::new(self.sample_rate);
         self.lfo_cc1 = 0;
@@ -719,7 +715,10 @@ impl Plugin for Ym38x6Plugin {
         self.engine.set_patch(patch);
 
         // 発音中チャンネルへDAWオートメーションの変更とAT/Poly AT Destinationの加算を反映する
-        for (&note, &ch_id) in self.note_channels.iter() {
+        // （MIDIノート番号をそのままチャンネルIDとして使うため0〜127を走査する。
+        // 非発音チャンネルへのset_*はno-opになる）
+        for note in 0u8..128 {
+            let ch_id = note as usize;
             let mut note_patch = patch;
             apply_at_modulation(
                 note,
@@ -803,16 +802,11 @@ impl Plugin for Ym38x6Plugin {
                 NoteEvent::NoteOn { note, velocity, .. } if velocity > 0.0 => {
                     let freq = 440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0);
                     let velocity_u8 = (velocity * 127.0).round() as u8;
-                    // 同じキーが押しっぱなしの場合は同じチャンネルでリトリガー
-                    // （リリースを即座にカットしてAttackから再開、実機Key-On挙動に準拠）
-                    let ch_id = if let Some(&old_id) = self.note_channels.get(&note) {
-                        self.engine.retrigger_with_velocity(old_id, freq, velocity_u8, patch);
-                        old_id
-                    } else {
-                        let ch_id = self.engine.note_on_with_velocity(freq, velocity_u8, patch);
-                        self.note_channels.insert(note, ch_id);
-                        ch_id
-                    };
+                    let ch_id = note as usize;
+                    // MIDIノート番号をそのままチャンネルIDとして使う。
+                    // 同じノートが発音中/リリース中でもnote_on_with_velocityが即座にカットして
+                    // Attackから再開する（実機Key-On挙動に準拠＝同音チョーク）。
+                    self.engine.note_on_with_velocity(ch_id, freq, velocity_u8, patch);
                     self.apply_performance_lfo(ch_id);
                     for (op_index, &f_number) in self.operator_f_number_override.iter().enumerate() {
                         self.engine.set_operator_f_number(ch_id, op_index, f_number);
@@ -820,10 +814,7 @@ impl Plugin for Ym38x6Plugin {
                 }
                 NoteEvent::NoteOn { note, .. } | NoteEvent::NoteOff { note, .. } => {
                     // velocity=0 の NoteOn も NoteOff として扱う（MIDI仕様）
-                    if let Some(&ch_id) = self.note_channels.get(&note) {
-                        self.engine.note_off(ch_id);
-                        self.note_channels.remove(&note);
-                    }
+                    self.engine.note_off(note as usize);
                     self.poly_pressure.remove(&note);
                 }
                 // AT/Poly AT Destination（NRPN(0,16)/(0,17)）の加算対象
@@ -892,17 +883,14 @@ impl Plugin for Ym38x6Plugin {
                         let op_index = (cc - 102) as usize;
                         let key_on = cc_to_u7(value) >= 64;
                         if op_index == 3 && !key_on {
-                            // Op3（マスター）キーオフ：そのノートのNote-Off相当としてnote_channelsから除去する
-                            let notes: Vec<u8> = self.note_channels.keys().copied().collect();
-                            for note in notes {
-                                if let Some(ch_id) = self.note_channels.remove(&note) {
-                                    self.engine.note_off_operator(ch_id, 3);
-                                }
+                            // Op3（マスター）キーオフ：全チャンネルのNote-Off相当として扱う
+                            for note in 0u8..128 {
+                                self.engine.note_off_operator(note as usize, 3);
                                 self.poly_pressure.remove(&note);
                             }
                         } else {
-                            let channels: Vec<usize> = self.note_channels.values().copied().collect();
-                            for ch_id in channels {
+                            for note in 0u8..128 {
+                                let ch_id = note as usize;
                                 if key_on {
                                     self.engine.note_on_operator(ch_id, op_index);
                                 } else {
