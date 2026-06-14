@@ -37,6 +37,10 @@ struct Channel {
     lfo_depth: f32,
     pitch_mod_cents: f32,
     volume_mod_delta: f32,
+    /// チョークで破棄される直前に仕込む線形フェードアウトの総サンプル数（0=通常状態）。
+    declick_total: u32,
+    /// デクリックフェードの残りサンプル数。declick_totalから1ずつ減り、0で完全に消える。
+    declick_remaining: u32,
 }
 
 impl Channel {
@@ -47,7 +51,16 @@ impl Channel {
                lfo_destination: LfoDestination::default(),
                lfo_depth: 0.0,
                pitch_mod_cents: 0.0,
-               volume_mod_delta: 0.0 }
+               volume_mod_delta: 0.0,
+               declick_total: 0,
+               declick_remaining: 0 }
+    }
+
+    /// チョークで破棄される直前に呼ぶ。出力を`samples`サンプルかけて線形に0へ落とし、
+    /// 旧ボイスが非ゼロ振幅で瞬間消滅することによるクリックノイズを防ぐ。
+    fn start_declick(&mut self, samples: u32) {
+        self.declick_total = samples.max(1);
+        self.declick_remaining = self.declick_total;
     }
 
     /// パフォーマンスLFOのRate/Delay/Waveform/Destination/Depthを設定する
@@ -65,9 +78,25 @@ impl Channel {
         }
     }
 
-    fn is_idle(&self) -> bool { self.env_phase == EnvPhase::Idle }
+    fn is_idle(&self) -> bool {
+        // デクリックフェード中はランプが終わるまで生存させる（途中で消すと逆にクリックになる）。
+        if self.declick_total > 0 {
+            return self.declick_remaining == 0;
+        }
+        self.env_phase == EnvPhase::Idle
+    }
 
     fn tick(&mut self, sample_rate: f32, wave: &WaveTable) -> f32 {
+        // デクリックゲイン：チョークされた旧ボイスを線形に0へ落とす。env_phaseがIdleへ
+        // 到達しても残りサンプルを消化しきるよう、先頭で必ず減算する（is_idleが止まらないように）。
+        let declick_gain = if self.declick_total > 0 {
+            let g = self.declick_remaining as f32 / self.declick_total as f32;
+            self.declick_remaining = self.declick_remaining.saturating_sub(1);
+            g
+        } else {
+            1.0
+        };
+
         let sustain_level = self.adsr.sustain as f32 / 255.0;
         match self.env_phase {
             EnvPhase::Attack => {
@@ -102,7 +131,7 @@ impl Channel {
         self.osc_phase = (self.osc_phase + effective_freq / sample_rate).fract();
         let idx = (self.osc_phase * wave.len() as f32) as usize;
         let effective_level = (self.env_level + self.volume_mod_delta).clamp(0.0, 1.0);
-        wave.sample_at(idx) * effective_level
+        wave.sample_at(idx) * effective_level * declick_gain
     }
 }
 
@@ -122,9 +151,15 @@ impl PerformanceLfoTarget for Channel {
 
 const TOTAL_SLOTS: usize = 256;
 
+/// チョークで破棄されるボイスを線形フェードアウトさせる時間（秒）。クリック緩和用。
+/// 新ボイスの発音タイミングは遅らせず、消えゆく旧ボイスにのみ適用するためレイテンシーは増えない。
+const DECLICK_SECONDS: f32 = 0.004;
+
 pub struct Wms1Engine {
     sample_rate: f32,
     channels: HashMap<usize, Channel>,
+    /// チョークされ、デクリックフェード中の旧ボイス。フェード完了で破棄される。
+    fading_voices: Vec<Channel>,
     wave_tables: Vec<Option<WaveTable>>,
 }
 
@@ -135,7 +170,7 @@ impl Wms1Engine {
         wave_tables[1] = Some(gen_square());
         wave_tables[2] = Some(gen_sawtooth());
         wave_tables[3] = Some(gen_triangle());
-        Self { sample_rate, channels: HashMap::new(), wave_tables }
+        Self { sample_rate, channels: HashMap::new(), fading_voices: Vec::new(), wave_tables }
     }
 
     /// スロット 8–255 にユーザー定義波形をロード
@@ -154,6 +189,14 @@ impl Wms1Engine {
 
 impl SoundEngine for Wms1Engine {
     fn note_on(&mut self, channel: usize, wave_slot: u8, frequency: f32, adsr: AdsrParams) {
+        // 同じIDで発音中/リリース中のボイスがあれば、即破棄せず数msかけてフェードアウトさせる
+        // （瞬間消滅によるクリック緩和）。新ボイスは下で即座に発音するためレイテンシーは増えない。
+        if let Some(mut old) = self.channels.remove(&channel) {
+            if !old.is_idle() {
+                old.start_declick((self.sample_rate * DECLICK_SECONDS) as u32);
+                self.fading_voices.push(old);
+            }
+        }
         self.channels.insert(channel, Channel::new(wave_slot, frequency, adsr));
     }
 
@@ -167,6 +210,7 @@ impl SoundEngine for Wms1Engine {
         let num_channels = num_channels.max(1);
         let sample_rate = self.sample_rate;
         let wave_tables = &self.wave_tables;
+        let fading_voices = &mut self.fading_voices;
         for frame in output.chunks_mut(num_channels) {
             let mut mix = 0.0f32;
             for ch in self.channels.values_mut() {
@@ -175,9 +219,17 @@ impl SoundEngine for Wms1Engine {
                     mix += ch.tick(sample_rate, wave);
                 }
             }
+            // チョークされフェードアウト中の旧ボイスも一緒にミックスする
+            for ch in fading_voices.iter_mut() {
+                if ch.is_idle() { continue; }
+                if let Some(wave) = &wave_tables[ch.wave_slot as usize] {
+                    mix += ch.tick(sample_rate, wave);
+                }
+            }
             for s in frame.iter_mut() { *s += mix; }
         }
         self.channels.retain(|_, ch| !ch.is_idle());
+        self.fading_voices.retain(|ch| !ch.is_idle());
     }
 }
 
