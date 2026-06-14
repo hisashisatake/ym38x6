@@ -125,7 +125,6 @@ const TOTAL_SLOTS: usize = 256;
 pub struct Wms1Engine {
     sample_rate: f32,
     channels: HashMap<usize, Channel>,
-    next_id: usize,
     wave_tables: Vec<Option<WaveTable>>,
 }
 
@@ -136,7 +135,7 @@ impl Wms1Engine {
         wave_tables[1] = Some(gen_square());
         wave_tables[2] = Some(gen_sawtooth());
         wave_tables[3] = Some(gen_triangle());
-        Self { sample_rate, channels: HashMap::new(), next_id: 0, wave_tables }
+        Self { sample_rate, channels: HashMap::new(), wave_tables }
     }
 
     /// スロット 8–255 にユーザー定義波形をロード
@@ -154,25 +153,13 @@ impl Wms1Engine {
 }
 
 impl SoundEngine for Wms1Engine {
-    fn note_on(&mut self, wave_slot: u8, frequency: f32, adsr: AdsrParams) -> usize {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.channels.insert(id, Channel::new(wave_slot, frequency, adsr));
-        id
+    fn note_on(&mut self, channel: usize, wave_slot: u8, frequency: f32, adsr: AdsrParams) {
+        self.channels.insert(channel, Channel::new(wave_slot, frequency, adsr));
     }
 
     fn note_off(&mut self, channel: usize) {
         if let Some(ch) = self.channels.get_mut(&channel) {
             ch.note_off();
-        }
-    }
-
-    fn retrigger(&mut self, channel: usize, wave_slot: u8, frequency: f32, adsr: AdsrParams) -> bool {
-        if let Some(ch) = self.channels.get_mut(&channel) {
-            *ch = Channel::new(wave_slot, frequency, adsr);
-            true
-        } else {
-            false
         }
     }
 
@@ -222,7 +209,8 @@ mod tests {
     fn engine_note_on_off_renders() {
         let mut engine = Wms1Engine::new(44100.0);
         let adsr = AdsrParams::default();
-        let ch = engine.note_on(0, 440.0, adsr);
+        let ch = 0;
+        engine.note_on(ch, 0, 440.0, adsr);
         let mut buf = vec![0.0f32; 512];
         engine.render(&mut buf, 1);
         assert!(buf.iter().any(|&s| s != 0.0), "expected non-silent output");

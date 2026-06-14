@@ -157,12 +157,11 @@ impl Default for AdsrParams {
 ///
 /// `Send` is required so the engine can be moved to the audio thread.
 pub trait SoundEngine: Send {
-    fn note_on(&mut self, wave_slot: u8, frequency: f32, adsr: AdsrParams) -> usize;
+    /// 指定チャンネルIDへ即座にキーオンする（既存の内容があれば上書き）。
+    /// 同じIDで発音中/リリース中のチャンネルが既にあっても、エンベロープを即座にカットして
+    /// Attackから再開する（実機FM音源のKey-On時の挙動に準拠＝同音チョーク）。
+    fn note_on(&mut self, channel: usize, wave_slot: u8, frequency: f32, adsr: AdsrParams);
     fn note_off(&mut self, channel: usize);
-    /// 指定チャンネルを同じチャンネルIDのまま即座にキーオフ&キーオンする。
-    /// リリース中であってもエンベロープを即座にカットしてAttackから再開する
-    /// （実機FM音源のKey-On時の挙動に準拠）。チャンネルが存在しない場合はfalseを返す。
-    fn retrigger(&mut self, channel: usize, wave_slot: u8, frequency: f32, adsr: AdsrParams) -> bool;
     fn render(&mut self, output: &mut [f32], num_channels: usize);
 }
 

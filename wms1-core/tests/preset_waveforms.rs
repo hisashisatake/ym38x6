@@ -16,7 +16,7 @@ fn preset_wave_slots_match_tables() {
 
     for (slot, table) in tables.iter().enumerate() {
         let mut engine = Wms1Engine::new(sample_rate);
-        engine.note_on(slot as u8, sample_rate / table_len as f32, adsr);
+        engine.note_on(0, slot as u8, sample_rate / table_len as f32, adsr);
 
         // ウォームアップ: エンベロープがサスティンレベル(=1.0)に達するまで進める
         let mut warmup = vec![0.0f32; 100];

@@ -7,13 +7,13 @@ fn multiple_notes_mix_additively() {
     let adsr = AdsrParams { attack: 255, decay: 0, sustain: 255, release: 0 };
 
     let mut engine_one = Wms1Engine::new(sample_rate);
-    engine_one.note_on(1, 1.0, adsr);
+    engine_one.note_on(0, 1, 1.0, adsr);
     let mut buf_one = vec![0.0f32; 60];
     engine_one.render(&mut buf_one, 1);
 
     let mut engine_two = Wms1Engine::new(sample_rate);
-    engine_two.note_on(1, 1.0, adsr);
-    engine_two.note_on(1, 1.0, adsr);
+    engine_two.note_on(0, 1, 1.0, adsr);
+    engine_two.note_on(1, 1, 1.0, adsr);
     let mut buf_two = vec![0.0f32; 60];
     engine_two.render(&mut buf_two, 1);
 
@@ -33,8 +33,9 @@ fn finished_channel_no_longer_affects_mix() {
     let sustained_adsr = AdsrParams { attack: 255, decay: 0, sustain: 255, release: 0 };
 
     let mut engine = Wms1Engine::new(sample_rate);
-    let releasing = engine.note_on(1, 1.0, releasing_adsr);
-    engine.note_on(1, 2.0, sustained_adsr);
+    let releasing = 0;
+    engine.note_on(releasing, 1, 1.0, releasing_adsr);
+    engine.note_on(1, 1, 2.0, sustained_adsr);
 
     // 両方ともattackを終えてsustainレベルに達するまで進める
     let mut warmup = vec![0.0f32; 60];
@@ -48,7 +49,7 @@ fn finished_channel_no_longer_affects_mix() {
 
     // 比較用: 最初から持続音（2.0Hz）のみを発音したエンジン
     let mut engine_ref = Wms1Engine::new(sample_rate);
-    engine_ref.note_on(1, 2.0, sustained_adsr);
+    engine_ref.note_on(0, 1, 2.0, sustained_adsr);
     let mut warmup_ref = vec![0.0f32; 60];
     engine_ref.render(&mut warmup_ref, 1);
     let mut buf_ref = vec![0.0f32; 100];

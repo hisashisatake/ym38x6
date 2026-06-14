@@ -1,5 +1,4 @@
 use nice_plug::prelude::*;
-use std::collections::HashMap;
 use std::sync::Arc;
 use wms1_core::{AdsrParams, ChorusType, LfoDestination, LfoWaveform, MasterEffects, ReverbType,
     SoundEngine, Wms1Engine, pitch_depth_cents, volume_depth};
@@ -70,8 +69,7 @@ struct Wms1Plugin {
     params: Arc<Wms1Params>,
     engine: Wms1Engine,
     effects: MasterEffects,
-    note_channels: HashMap<u8, usize>, // MIDIノート番号 → エンジンチャンネルID
-    render_buffer: Vec<f32>,           // プロセスコールバック用インターリーブ作業バッファ
+    render_buffer: Vec<f32>, // プロセスコールバック用インターリーブ作業バッファ
     sample_rate: f32,
     lfo_state: PerformanceLfoState,
     rpn_msb: u8,
@@ -148,7 +146,6 @@ impl Default for Wms1Plugin {
             params: Arc::new(Wms1Params::default()),
             engine: Wms1Engine::new(DEFAULT_SR),
             effects: MasterEffects::new(DEFAULT_SR),
-            note_channels: HashMap::new(),
             render_buffer: Vec::new(),
             sample_rate: DEFAULT_SR,
             lfo_state: PerformanceLfoState::default(),
@@ -179,9 +176,8 @@ impl Wms1Plugin {
 
     /// 発音中の全チャンネルへ現在のパフォーマンスLFO設定を再適用する
     fn apply_performance_lfo_to_active(&mut self) {
-        let channels: Vec<usize> = self.note_channels.values().copied().collect();
-        for ch in channels {
-            self.apply_performance_lfo(ch);
+        for note in 0u8..128 {
+            self.apply_performance_lfo(note as usize);
         }
     }
 
@@ -299,7 +295,6 @@ impl Plugin for Wms1Plugin {
     }
 
     fn reset(&mut self) {
-        self.note_channels.clear();
         self.engine = Wms1Engine::new(self.sample_rate);
         self.effects = MasterEffects::new(self.sample_rate);
         self.lfo_state = PerformanceLfoState::default();
@@ -362,24 +357,16 @@ impl Plugin for Wms1Plugin {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } if velocity > 0.0 => {
                     let freq = 440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0);
-                    // 同じキーが押しっぱなしの場合は同じチャンネルでリトリガー
-                    // （リリースを即座にカットしてAttackから再開、実機Key-On挙動に準拠）
-                    let ch_id = if let Some(&old_id) = self.note_channels.get(&note) {
-                        self.engine.retrigger(old_id, wave_slot, freq, adsr);
-                        old_id
-                    } else {
-                        let ch_id = self.engine.note_on(wave_slot, freq, adsr);
-                        self.note_channels.insert(note, ch_id);
-                        ch_id
-                    };
+                    let ch_id = note as usize;
+                    // MIDIノート番号をそのままチャンネルIDとして使う。
+                    // 同じノートが発音中/リリース中でもnote_onが即座にカットして
+                    // Attackから再開する（実機Key-On挙動に準拠＝同音チョーク）。
+                    self.engine.note_on(ch_id, wave_slot, freq, adsr);
                     self.apply_performance_lfo(ch_id);
                 }
                 NoteEvent::NoteOn { note, .. } | NoteEvent::NoteOff { note, .. } => {
                     // velocity=0 の NoteOn も NoteOff として扱う（MIDI仕様）
-                    if let Some(&ch_id) = self.note_channels.get(&note) {
-                        self.engine.note_off(ch_id);
-                        self.note_channels.remove(&note);
-                    }
+                    self.engine.note_off(note as usize);
                 }
                 // パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN Destination/Waveform）
                 NoteEvent::MidiCC { cc, value, .. } => match cc {

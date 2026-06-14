@@ -8,7 +8,8 @@ fn volume_destination_modulates_amplitude_with_square_lfo() {
     let adsr = AdsrParams { attack: 255, decay: 0, sustain: 255, release: 0 };
 
     let mut engine = Wms1Engine::new(sample_rate);
-    let ch = engine.note_on(1, 1.0, adsr); // wave_slot=1: 矩形波（振幅は常に±1）
+    let ch = 0;
+    engine.note_on(ch, 1, 1.0, adsr); // wave_slot=1: 矩形波（振幅は常に±1）
     engine.set_performance_lfo(ch, 255, 0, LfoWaveform::Square, LfoDestination::Volume, 1.0);
 
     // attackを終えてsustain(=1.0)に到達するまでウォームアップ
@@ -32,13 +33,15 @@ fn pitch_destination_shifts_oscillator_frequency() {
     let adsr = AdsrParams { attack: 255, decay: 0, sustain: 255, release: 0 };
 
     let mut engine_no_depth = Wms1Engine::new(sample_rate);
-    let ch0 = engine_no_depth.note_on(0, 440.0, adsr); // sine
+    let ch0 = 0;
+    engine_no_depth.note_on(ch0, 0, 440.0, adsr); // sine
     engine_no_depth.set_performance_lfo(ch0, 255, 0, LfoWaveform::Sine, LfoDestination::Pitch, 0.0);
     let mut buf_no_depth = vec![0.0f32; 200];
     engine_no_depth.render(&mut buf_no_depth, 1);
 
     let mut engine_with_depth = Wms1Engine::new(sample_rate);
-    let ch1 = engine_with_depth.note_on(0, 440.0, adsr);
+    let ch1 = 0;
+    engine_with_depth.note_on(ch1, 0, 440.0, adsr);
     engine_with_depth.set_performance_lfo(ch1, 255, 0, LfoWaveform::Sine, LfoDestination::Pitch, 1200.0); // ±1オクターブ
     let mut buf_with_depth = vec![0.0f32; 200];
     engine_with_depth.render(&mut buf_with_depth, 1);

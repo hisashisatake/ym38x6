@@ -10,7 +10,7 @@ fn attack_phase_ramps_to_full_level() {
     let sample_rate = 44100.0;
     let adsr = AdsrParams { attack: 255, decay: 0, sustain: 0, release: 0 };
     let mut engine = Wms1Engine::new(sample_rate);
-    engine.note_on(1, 1.0, adsr);
+    engine.note_on(0, 1, 1.0, adsr);
 
     let mut buf = vec![0.0f32; 60];
     engine.render(&mut buf, 1);
@@ -28,7 +28,7 @@ fn decay_phase_settles_to_sustain_level() {
     let sample_rate = 44100.0;
     let adsr = AdsrParams { attack: 255, decay: 255, sustain: 128, release: 0 };
     let mut engine = Wms1Engine::new(sample_rate);
-    engine.note_on(1, 1.0, adsr);
+    engine.note_on(0, 1, 1.0, adsr);
 
     let mut buf = vec![0.0f32; 200];
     engine.render(&mut buf, 1);
@@ -50,7 +50,8 @@ fn release_phase_fades_to_silence() {
     let sample_rate = 44100.0;
     let adsr = AdsrParams { attack: 255, decay: 255, sustain: 128, release: 255 };
     let mut engine = Wms1Engine::new(sample_rate);
-    let ch = engine.note_on(1, 1.0, adsr);
+    let ch = 0;
+    engine.note_on(ch, 1, 1.0, adsr);
 
     // attack+decayを終え、sustainレベルに達するまで進める
     let mut warmup = vec![0.0f32; 100];
