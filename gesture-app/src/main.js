@@ -62,6 +62,22 @@ async function applyPerformanceLfoToActiveChannels() {
 }
 
 // ─────────────────────────────────────────────
+// Program切り替え（38x6エンジン時のみ表示、動作確認用の簡易UI）
+// ─────────────────────────────────────────────
+(async () => {
+  if (await invoke('engine_type') !== 'ym38x6') return;
+  const panel    = document.getElementById('program-panel');
+  const bankEl   = document.getElementById('program-bank');
+  const numEl    = document.getElementById('program-num');
+  panel.classList.add('visible');
+  document.getElementById('program-set').addEventListener('click', async () => {
+    const bank    = Math.max(0, Math.min(16383, parseInt(bankEl.value, 10) || 0));
+    const program = Math.max(0, Math.min(127, parseInt(numEl.value, 10) || 0));
+    await invoke('ym38x6_set_program', { bank, program });
+  });
+})();
+
+// ─────────────────────────────────────────────
 // Canvas
 // ─────────────────────────────────────────────
 const canvas  = document.getElementById('canvas');

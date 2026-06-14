@@ -7,7 +7,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 use wms1_core::{AdsrParams, ChorusType, LfoDestination, LfoWaveform, MasterEffects, ReverbType,
     SoundEngine, Wms1Engine, pitch_depth_cents, volume_depth};
-use ym38x6_core::{Ym38x6Engine, Ym38x6LfoDestination};
+use ym38x6_core::{presets_dir, PresetBank, Ym38x6Engine, Ym38x6LfoDestination};
 use ym38x6_dto::Ym38x6PatchDto;
 
 /// 起動時に選択されたエンジンの実体を保持する（settings.engine_typeで切り替え）。
@@ -42,7 +42,8 @@ fn note_on(
 ) -> usize {
     match &mut *engine.lock().unwrap() {
         EngineHandle::Wms1(e) => e.note_on(wave_slot, frequency, AdsrParams::default()),
-        EngineHandle::Ym38x6(_) => 0,
+        // ym38x6_set_program/ym38x6_set_patchで設定したcurrent_patchで発音する
+        EngineHandle::Ym38x6(e) => e.note_on(wave_slot, frequency, AdsrParams::default()),
     }
 }
 
@@ -50,7 +51,7 @@ fn note_on(
 fn note_off(engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>, channel: usize) {
     match &mut *engine.lock().unwrap() {
         EngineHandle::Wms1(e) => e.note_off(channel),
-        EngineHandle::Ym38x6(_) => {}
+        EngineHandle::Ym38x6(e) => e.note_off(channel),
     }
 }
 
@@ -114,6 +115,22 @@ fn ym38x6_note_off(engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>, channel: 
 fn ym38x6_set_patch(engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>, patch: Ym38x6PatchDto) {
     match &mut *engine.lock().unwrap() {
         EngineHandle::Ym38x6(e) => e.set_patch(patch.into()),
+        EngineHandle::Wms1(_) => {}
+    }
+}
+
+/// (bank, program)に対応するプリセットへ切り替える。ym38x6-vstのProgramパラメーターと
+/// 同じ`PresetBank::patch_for_program`を使うため、音はVSTと完全に同一になる。
+#[tauri::command]
+fn ym38x6_set_program(
+    engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>,
+    preset_bank: tauri::State<'_, PresetBank>,
+    bank: u16,
+    program: u8,
+) {
+    let patch = preset_bank.patch_for_program(bank, program);
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Ym38x6(e) => e.set_patch(patch),
         EngineHandle::Wms1(_) => {}
     }
 }
@@ -205,6 +222,7 @@ fn main() {
     let engine_audio = Arc::clone(&engine);
     let effects = Arc::new(Mutex::new(MasterEffects::new(sample_rate)));
     let effects_audio = Arc::clone(&effects);
+    let preset_bank = PresetBank::load_from_dir(&presets_dir());
 
     let stream = device
         .build_output_stream::<f32, _, _>(
@@ -229,6 +247,7 @@ fn main() {
         .manage(engine)
         .manage(effects)
         .manage(settings.engine_type)
+        .manage(preset_bank)
         .invoke_handler(tauri::generate_handler![
             engine_type,
             note_on,
@@ -238,6 +257,7 @@ fn main() {
             ym38x6_note_on,
             ym38x6_note_off,
             ym38x6_set_patch,
+            ym38x6_set_program,
             ym38x6_set_performance_lfo,
         ])
         .run(tauri::generate_context!())

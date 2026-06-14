@@ -28,10 +28,34 @@
       position: fixed; top: 14px; right: 18px;
       font-size: 12px; color: #444; text-align: right; line-height: 2;
     }
+
+    /* 左上: Program切り替え（38x6エンジン時のみ表示、動作確認用の簡易UI） */
+    #program-panel {
+      display: none;
+      position: fixed; top: 14px; left: 18px;
+      font-size: 12px; color: #888;
+      align-items: center; gap: 6px;
+    }
+    #program-panel.visible { display: flex; }
+    #program-panel input {
+      width: 48px; background: #222; color: #eee; border: 1px solid #444;
+      font-family: monospace; font-size: 12px; padding: 2px 4px;
+    }
+    #program-panel button {
+      background: #222; color: #eee; border: 1px solid #444;
+      font-family: monospace; font-size: 12px; padding: 2px 8px; cursor: pointer;
+    }
+    #program-panel button:hover { background: #333; }
   </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
+
+  <div id="program-panel">
+    Bank <input type="number" id="program-bank" value="0" min="0" max="16383">
+    Program <input type="number" id="program-num" value="0" min="0" max="127">
+    <button id="program-set">Set Program</button>
+  </div>
 
   <div id="hud">
     <div id="chord-display">—</div>
