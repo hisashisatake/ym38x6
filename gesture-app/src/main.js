@@ -62,19 +62,26 @@ async function applyPerformanceLfoToActiveChannels() {
 }
 
 // ─────────────────────────────────────────────
-// Program切り替え（38x6エンジン時のみ表示、動作確認用の簡易UI）
+// Program切り替え（動作確認用の簡易UI、数値変更で即時反映）
+// ym38x6: Bank/Programでプリセットを切り替え。wms1: Bankは無視し、Programを波形選択に使う
 // ─────────────────────────────────────────────
 (async () => {
-  if (await invoke('engine_type') !== 'ym38x6') return;
-  const panel    = document.getElementById('program-panel');
-  const bankEl   = document.getElementById('program-bank');
-  const numEl    = document.getElementById('program-num');
-  panel.classList.add('visible');
-  document.getElementById('program-set').addEventListener('click', async () => {
-    const bank    = Math.max(0, Math.min(16383, parseInt(bankEl.value, 10) || 0));
+  const engineType = await invoke('engine_type');
+  const bankEl = document.getElementById('program-bank');
+  const numEl  = document.getElementById('program-num');
+
+  async function applyProgram() {
     const program = Math.max(0, Math.min(127, parseInt(numEl.value, 10) || 0));
-    await invoke('ym38x6_set_program', { bank, program });
-  });
+    if (engineType === 'ym38x6') {
+      const bank = Math.max(0, Math.min(16383, parseInt(bankEl.value, 10) || 0));
+      await invoke('ym38x6_set_program', { bank, program });
+    } else {
+      currentWaveSlot = program % WAVE_NAMES.length;
+      lastChordKey = null; // 同じコードでも即座に音色変更させる
+    }
+  }
+  bankEl.addEventListener('input', applyProgram);
+  numEl.addEventListener('input', applyProgram);
 })();
 
 // ─────────────────────────────────────────────
@@ -267,11 +274,6 @@ window.addEventListener('keydown', async (e) => {
     lfoRate = Math.min(255, lfoRate + LFO_RATE_STEP);
     await applyPerformanceLfoToActiveChannels();
   }
-  const slot = parseInt(e.key) - 1;
-  if (slot >= 0 && slot <= 3) {
-    currentWaveSlot = slot;
-    lastChordKey = null; // 同じコードでも即座に音色変更させる
-  }
 });
 
 // ─────────────────────────────────────────────
@@ -310,7 +312,6 @@ function draw() {
   } else {
     drawCalibLayer(W, H);
   }
-  drawWaveIndicator(W, H);
   drawLfoIndicator(W, H);
 }
 
@@ -433,16 +434,6 @@ function drawChordScale(W, H) {
   ctx.textAlign = 'right';
   ctx.fillText('明るい →', startX + step * (total - 1) + 60, y);
 
-}
-
-function drawWaveIndicator(W, H) {
-  ctx.textAlign = 'right';
-  ctx.font = '13px monospace';
-  for (let i = 0; i < WAVE_NAMES.length; i++) {
-    const isActive = i === currentWaveSlot;
-    ctx.fillStyle = isActive ? '#fa4' : '#444';
-    ctx.fillText(`${i + 1}:${WAVE_NAMES[i]}`, W - 16, H - 16 - (WAVE_NAMES.length - 1 - i) * 20);
-  }
 }
 
 function drawLfoIndicator() {
