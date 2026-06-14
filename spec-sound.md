@@ -510,9 +510,34 @@ CC67 ON中に新規キーオンしたノートに対してのみ、実効TLとFi
 実効Cutoff = clamp(Cutoffベース値 - CC67値, 0, 255)
 ```
 
-**将来の検討（ペダルON時の同音重ね発音）：**
+**サステインペダル（CC64）の実装方針（未実装・将来対応）：**
 
-現状VSTはMIDIノート番号をそのままchannel IDとして使うため、同じノートを再度キーオンすると前の発音が同音チョークされる（[キーオン契約](#チャンネルidとキーオン契約sound-core共通)）。ピアノ系音色では1鍵=1組の弦に相当するため、ペダルON時でもこの「チョーク＋再発音」が物理的に正しい。一方、パッド系などで「ペダルを踏んで同音を重ねて独立に減衰させる（スウェル）」表現を出したい場合は、ペダルON時のみ新規ユニークIDを割り当てて重ね発音を許す方式が考えられる。この拡張はVST側のID割り当てポリシーのみで完結し、エンジンのinsert-or-replace契約は変更不要（VST側で`note番号 → 複数channel ID`の多重マップを持ち、Note-Off／ペダル解放時に対象IDをまとめてReleaseする）。現スコープ（ペダル無しのgesture-app・ピアノ系音色）では不要のため未実装。
+「ペダル対応」は2つの独立した関心事に分かれる。(a)はペダル本体、(b)はオプション拡張。
+
+**(a) ホールドフラグ方式（第一候補、まずこれを実装する）：**
+
+普通のサステイン（離鍵してもReleaseに入らない）は、チャンネルを新規確保せず、現状の1ノート=1チャンネル（[キーオン契約](#チャンネルidとキーオン契約sound-core共通)）のまま実現できる。VST側に `pedal_down: bool` と `pending_release: HashSet<note>`（離鍵済みだがペダル保持中のノート）を持つ。
+
+```
+Note-On(note):   engine.note_on(note as id, ...)         // 現状どおり（チョーク＋デクリック）
+                 pending_release.remove(note)            // 弾き直したら保持解除
+Note-Off(note):  if pedal_down { pending_release.insert(note) }  // 離鍵してもReleaseしない
+                 else         { engine.note_off(note) }
+CC64 ON:         pedal_down = true
+CC64 OFF:        pedal_down = false
+                 pending_release中の全ノートをengine.note_off()してdrain
+```
+
+鍵がまだ押されている音は `pending_release` に入らない（ペダルを離しても鳴り続ける）。同じ鍵を弾き直すと保持中の音は自然にチョークされる（ピアノは1鍵=1組の弦なので物理的に正しい）。エンジンは無改造で済む（必要なら `set_sustain(channel, bool)` のようなAPIを足す案もあるが、まずはVST完結）。Sostenuto（CC66）は対象を限定した同じ仕組み。
+
+**(b) ペダルON時の同音重ね発音（スウェル、オプション拡張）：**
+
+パッド系などで「ペダルを踏んで同じ音を重ねて独立に減衰させる」表現が欲しい場合のみ必要。ピアノでは物理的に起きないので(a)とは別物。チャンネルIDをノート番号から切り離し、ペダルON時のみ新規ユニークIDを割り当てて重ね発音を許す。38x6はチャンネル無制限のため「空きチャンネル検索」は不要で、IDを払い出すだけ（カウンター採番や `note番号 + 世代` 等）でよい。choke/overlapの判定はVST側のID採番ポリシーのみで決まり、エンジンのinsert-or-replace契約は変更不要：
+
+- ペダルUP → `id = ノート番号`（前をチョーク、現状の挙動）
+- ペダルDOWN → `id = 新規ユニークID`（重なる）
+
+代償はVST側に `note番号 → 複数channel ID` の多重マップが要ること（Note-Off／ペダル解放時に対象IDをまとめてReleaseする）。現スコープ（ペダル無しのgesture-app・ピアノ系音色）では不要のため未実装。
 
 ### Pitch Bend
 
