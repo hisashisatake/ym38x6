@@ -1,9 +1,30 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::operator::OperatorParams;
 use crate::Ym38x6Patch;
+
+/// ユーザープリセットの読み込み元ディレクトリ（暫定）。
+/// `%APPDATA%\ym38x6\presets`が存在すればそちらを使い、無ければExplorerで見つけやすい
+/// `%USERPROFILE%\Documents\ym38x6\presets`にフォールバックする。
+/// 本格的なプリセット管理UIができるまでの間の配置場所。
+pub fn presets_dir() -> PathBuf {
+    let appdata_dir = std::env::var("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("ym38x6")
+        .join("presets");
+    if appdata_dir.is_dir() {
+        return appdata_dir;
+    }
+    std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("Documents")
+        .join("ym38x6")
+        .join("presets")
+}
 
 /// Bank Select（CC0×128+CC32）とProgram Change（0〜127）から決定的にパッチを生成する
 /// 暫定プレースホルダー。GM2準拠のBank0音色はym38x6-ml（フェーズ5、インバース合成）で、
@@ -319,6 +340,17 @@ impl PresetBank {
 
     pub fn get(&self, bank: u16, program: u8) -> Option<&Preset> {
         self.presets.get(&(bank, program))
+    }
+
+    /// (bank, program)に対応するパッチを解決する（MIDI Program Change・VST3
+    /// Programパラメーター・gesture-appのProgram選択コマンドから共通で使う）。
+    /// 優先順位: ユーザープリセット(.38x6) > GM2 Bank0手動チューニング(該当programのみ)
+    /// > 暫定プレースホルダーパッチ
+    pub fn patch_for_program(&self, bank: u16, program: u8) -> Ym38x6Patch {
+        self.get(bank, program)
+            .map(|preset| preset.patch)
+            .or_else(|| (bank == 0).then(|| gm2_bank0_patch(program)).flatten())
+            .unwrap_or_else(|| placeholder_patch(bank, program))
     }
 }
 

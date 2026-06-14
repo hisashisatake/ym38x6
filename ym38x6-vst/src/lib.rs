@@ -1,35 +1,13 @@
 use nice_plug::prelude::*;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use ym38x6_core::algorithm::ALGORITHMS;
 use ym38x6_core::mapping::F_NUMBER_CENTER;
 use ym38x6_core::{
-    gm2_bank0_patch, pitch_depth_cents, placeholder_patch, volume_depth, ChannelParams,
-    ChorusType, LfoWaveform, MasterEffects, OperatorParams, PresetBank, ReverbType, SoundEngine,
-    Ym38x6Engine, Ym38x6LfoDestination, Ym38x6Patch,
+    pitch_depth_cents, presets_dir, volume_depth, ChannelParams, ChorusType, LfoWaveform,
+    MasterEffects, OperatorParams, PresetBank, ReverbType, SoundEngine, Ym38x6Engine,
+    Ym38x6LfoDestination, Ym38x6Patch,
 };
-
-/// ユーザープリセットの読み込み元ディレクトリ（暫定）。
-/// `%APPDATA%\ym38x6\presets`が存在すればそちらを使い、無ければExplorerで見つけやすい
-/// `%USERPROFILE%\Documents\ym38x6\presets`にフォールバックする。
-/// 本格的なプリセット管理UIができるまでの間の配置場所。
-fn presets_dir() -> PathBuf {
-    let appdata_dir = std::env::var("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("ym38x6")
-        .join("presets");
-    if appdata_dir.is_dir() {
-        return appdata_dir;
-    }
-    std::env::var("USERPROFILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("Documents")
-        .join("ym38x6")
-        .join("presets")
-}
 
 /// マスター単位5パラメーターのデフォルト値（wms1-vstと同じ値、`MasterEffects::new()`の内部初期値と一致）
 const DEFAULT_REVERB_TIME: u8 = 128;
@@ -475,18 +453,6 @@ impl Ym38x6Plugin {
         Ym38x6Patch { operators, channel }
     }
 
-    /// (bank, program)に対応するパッチを解決する（NoteEvent::MidiProgramChange・
-    /// Programパラメーターの両方から使う共通ロジック）。
-    /// 優先順位: ユーザープリセット(.38x6) > GM2 Bank0手動チューニング(該当programのみ)
-    /// > 暫定プレースホルダーパッチ
-    fn patch_for_program(&self, bank: u16, program: u8) -> Ym38x6Patch {
-        self.preset_bank
-            .get(bank, program)
-            .map(|preset| preset.patch)
-            .or_else(|| (bank == 0).then(|| gm2_bank0_patch(program)).flatten())
-            .unwrap_or_else(|| placeholder_patch(bank, program))
-    }
-
     /// 指定チャンネルへ現在のパフォーマンスLFO設定を適用する
     fn apply_performance_lfo(&mut self, channel: usize) {
         let depth = match self.lfo_destination {
@@ -745,7 +711,7 @@ impl Plugin for Ym38x6Plugin {
                 None
             } else {
                 let bank = (self.bank_select_msb as u16) * 128 + self.bank_select_lsb as u16;
-                Some(self.patch_for_program(bank, program - 1))
+                Some(self.preset_bank.patch_for_program(bank, program - 1))
             };
         }
 
@@ -868,7 +834,7 @@ impl Plugin for Ym38x6Plugin {
                 // Programパラメーターを使う、process()参照）。
                 NoteEvent::MidiProgramChange { program, .. } => {
                     let bank = (self.bank_select_msb as u16) * 128 + self.bank_select_lsb as u16;
-                    self.program_patch = Some(self.patch_for_program(bank, program));
+                    self.program_patch = Some(self.preset_bank.patch_for_program(bank, program));
                 }
                 // パフォーマンスLFO（CC1/76/77/78・RPN0,5・NRPN Destination/Waveform）・
                 // マスターエフェクトセンドレベル（CC91/93）
