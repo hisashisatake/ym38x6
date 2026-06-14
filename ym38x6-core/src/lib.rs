@@ -371,6 +371,18 @@ impl Ym38x6Engine {
         id
     }
 
+    /// 既存チャンネルを同じチャンネルIDのまま即座にキーオフ&キーオンする（VST/Tauriから使用）。
+    /// リリース中であってもエンベロープを即座にカットしてAttackから再開する。
+    /// チャンネルが存在しない場合はfalseを返す。
+    pub fn retrigger_with_velocity(&mut self, channel: usize, frequency: f32, velocity: u8, patch: Ym38x6Patch) -> bool {
+        if let Some(ch) = self.channels.get_mut(&channel) {
+            *ch = Channel::new(frequency, velocity, patch);
+            true
+        } else {
+            false
+        }
+    }
+
     /// 発音中チャンネルのチャンネルパラメーターを更新する（DAWオートメーション/NRPN用）。
     pub fn set_channel_params(&mut self, channel: usize, params: ChannelParams) {
         if let Some(ch) = self.channels.get_mut(&channel) {
@@ -440,6 +452,12 @@ impl SoundEngine for Ym38x6Engine {
         if let Some(ch) = self.channels.get_mut(&channel) {
             ch.note_off();
         }
+    }
+
+    /// wave_slot/adsrはトレイト互換のため残すが未使用。velocity=127固定でカレントパッチを使う。
+    fn retrigger(&mut self, channel: usize, _wave_slot: u8, frequency: f32, _adsr: AdsrParams) -> bool {
+        let patch = self.current_patch;
+        self.retrigger_with_velocity(channel, frequency, 127, patch)
     }
 
     fn render(&mut self, output: &mut [f32], num_channels: usize) {

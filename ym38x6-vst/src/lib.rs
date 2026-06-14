@@ -801,14 +801,18 @@ impl Plugin for Ym38x6Plugin {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } if velocity > 0.0 => {
-                    // 同じキーが押しっぱなしの場合は旧チャンネルをリリース
-                    if let Some(&old_id) = self.note_channels.get(&note) {
-                        self.engine.note_off(old_id);
-                    }
                     let freq = 440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0);
                     let velocity_u8 = (velocity * 127.0).round() as u8;
-                    let ch_id = self.engine.note_on_with_velocity(freq, velocity_u8, patch);
-                    self.note_channels.insert(note, ch_id);
+                    // 同じキーが押しっぱなしの場合は同じチャンネルでリトリガー
+                    // （リリースを即座にカットしてAttackから再開、実機Key-On挙動に準拠）
+                    let ch_id = if let Some(&old_id) = self.note_channels.get(&note) {
+                        self.engine.retrigger_with_velocity(old_id, freq, velocity_u8, patch);
+                        old_id
+                    } else {
+                        let ch_id = self.engine.note_on_with_velocity(freq, velocity_u8, patch);
+                        self.note_channels.insert(note, ch_id);
+                        ch_id
+                    };
                     self.apply_performance_lfo(ch_id);
                     for (op_index, &f_number) in self.operator_f_number_override.iter().enumerate() {
                         self.engine.set_operator_f_number(ch_id, op_index, f_number);
