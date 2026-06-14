@@ -4,7 +4,6 @@ mod settings;
 mod ym38x6_dto;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use wms1_core::{AdsrParams, ChorusType, LfoDestination, LfoWaveform, MasterEffects, ReverbType,
     SoundEngine, Wms1Engine, pitch_depth_cents, volume_depth};
@@ -17,17 +16,6 @@ use ym38x6_dto::Ym38x6PatchDto;
 enum EngineHandle {
     Wms1(Wms1Engine),
     Ym38x6(Ym38x6Engine),
-}
-
-/// note_on/ym38x6_note_onが発行するチャンネルIDのアロケーター。
-/// SoundEngine::note_onは呼び出し側が安定したチャンネルIDを供給する契約のため
-/// （エンジン内部のID自動割り当ては廃止済み）、gesture-app側で一意なIDを発行する。
-struct ChannelIdAllocator(AtomicUsize);
-
-impl ChannelIdAllocator {
-    fn next(&self) -> usize {
-        self.0.fetch_add(1, Ordering::Relaxed)
-    }
 }
 
 impl EngineHandle {
@@ -46,35 +34,12 @@ fn engine_type(engine_type: tauri::State<'_, String>) -> String {
     (*engine_type).clone()
 }
 
+/// 指定チャンネルIDへキーオンする。チャンネルIDは呼び出し側（フロントエンド）が
+/// 安定したスロット番号として供給する。発音中/リリース中のチャンネルが既にあっても、
+/// エンベロープを即座にカットしてAttackから再開する（実機Key-On挙動に準拠＝同音チョーク）。
+/// 押し直し時に同じスロットIDを渡すことで、直前のリリーステールがチョークされる。
 #[tauri::command]
 fn note_on(
-    engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>,
-    channel_ids: tauri::State<'_, ChannelIdAllocator>,
-    wave_slot: u8,
-    frequency: f32,
-) -> usize {
-    let channel = channel_ids.next();
-    match &mut *engine.lock().unwrap() {
-        EngineHandle::Wms1(e) => e.note_on(channel, wave_slot, frequency, AdsrParams::default()),
-        // ym38x6_set_program/ym38x6_set_patchで設定したcurrent_patchで発音する
-        EngineHandle::Ym38x6(e) => e.note_on(channel, wave_slot, frequency, AdsrParams::default()),
-    }
-    channel
-}
-
-#[tauri::command]
-fn note_off(engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>, channel: usize) {
-    match &mut *engine.lock().unwrap() {
-        EngineHandle::Wms1(e) => e.note_off(channel),
-        EngineHandle::Ym38x6(e) => e.note_off(channel),
-    }
-}
-
-/// 既存チャンネルIDへ同じIDのまま即座にキーオンする。発音中/リリース中のチャンネルが
-/// 既にあっても、エンベロープを即座にカットしてAttackから再開する
-/// （実機Key-On挙動に準拠＝同音チョーク）。
-#[tauri::command]
-fn retrigger(
     engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>,
     channel: usize,
     wave_slot: u8,
@@ -82,8 +47,16 @@ fn retrigger(
 ) {
     match &mut *engine.lock().unwrap() {
         EngineHandle::Wms1(e) => e.note_on(channel, wave_slot, frequency, AdsrParams::default()),
-        // ym38x6_set_program/ym38x6_set_patchで設定したcurrent_patchで再発音する
+        // ym38x6_set_program/ym38x6_set_patchで設定したcurrent_patchで発音する
         EngineHandle::Ym38x6(e) => e.note_on(channel, wave_slot, frequency, AdsrParams::default()),
+    }
+}
+
+#[tauri::command]
+fn note_off(engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>, channel: usize) {
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Wms1(e) => e.note_off(channel),
+        EngineHandle::Ym38x6(e) => e.note_off(channel),
     }
 }
 
@@ -120,22 +93,19 @@ fn set_performance_lfo(
     }
 }
 
-/// 38x6エンジンでNote-Onする。`patch`は4オペレーター分のパラメーターとチャンネルパラメーター一式。
+/// 38x6エンジンで指定チャンネルIDへNote-Onする。`patch`は4オペレーター分のパラメーターと
+/// チャンネルパラメーター一式。チャンネルIDの扱い（同音チョーク）は`note_on`と同じ。
 #[tauri::command]
 fn ym38x6_note_on(
     engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>,
-    channel_ids: tauri::State<'_, ChannelIdAllocator>,
+    channel: usize,
     frequency: f32,
     velocity: u8,
     patch: Ym38x6PatchDto,
-) -> usize {
-    let channel = channel_ids.next();
+) {
     match &mut *engine.lock().unwrap() {
-        EngineHandle::Ym38x6(e) => {
-            e.note_on_with_velocity(channel, frequency, velocity, patch.into());
-            channel
-        }
-        EngineHandle::Wms1(_) => 0,
+        EngineHandle::Ym38x6(e) => e.note_on_with_velocity(channel, frequency, velocity, patch.into()),
+        EngineHandle::Wms1(_) => {}
     }
 }
 
@@ -285,12 +255,10 @@ fn main() {
         .manage(effects)
         .manage(settings.engine_type)
         .manage(preset_bank)
-        .manage(ChannelIdAllocator(AtomicUsize::new(0)))
         .invoke_handler(tauri::generate_handler![
             engine_type,
             note_on,
             note_off,
-            retrigger,
             set_performance_lfo,
             set_master_effects,
             ym38x6_note_on,

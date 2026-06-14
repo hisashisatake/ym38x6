@@ -195,27 +195,20 @@ async function updateChord(px, py) {
   isUpdating = true;
   try {
     const frequencies = chord.intervals.map(interval => midiFreq(root.midi + interval));
-    const prevChannels = activeChannels;
+    const prevCount = activeChannels.length;
     const nextChannels = [];
 
-    // 既存チャンネルは同じチャンネルでリトリガー
-    // （リリースを待たずに即座にカット&再アタック、実機Key-On挙動に準拠）
-    const reuseCount = Math.min(prevChannels.length, frequencies.length);
-    for (let i = 0; i < reuseCount; i++) {
-      const ch = prevChannels[i];
-      await invoke('retrigger', { channel: ch, waveSlot: currentWaveSlot, frequency: frequencies[i] });
-      nextChannels.push(ch);
-      await applyPerformanceLfo(ch);
+    // 各声部は固定スロット（声部インデックス i）をチャンネルIDとして使う。
+    // 押し直し（前のコードを離した後の再発音）でも同じスロットIDへnote_onするため、
+    // エンジン側で直前のリリーステールが即座にカット&再アタックされる（同音チョーク）。
+    for (let i = 0; i < frequencies.length; i++) {
+      await invoke('note_on', { channel: i, waveSlot: currentWaveSlot, frequency: frequencies[i] });
+      nextChannels.push(i);
+      await applyPerformanceLfo(i);
     }
-    // 旧コードの方が音数が多い場合、余剰チャンネルをキーオフ
-    for (let i = reuseCount; i < prevChannels.length; i++) {
-      await invoke('note_off', { channel: prevChannels[i] });
-    }
-    // 新コードの方が音数が多い場合、追加でキーオン
-    for (let i = reuseCount; i < frequencies.length; i++) {
-      const ch = await invoke('note_on', { waveSlot: currentWaveSlot, frequency: frequencies[i] });
-      nextChannels.push(ch);
-      await applyPerformanceLfo(ch);
+    // 旧コードの方が声部が多い場合、余ったスロットをキーオフ
+    for (let i = frequencies.length; i < prevCount; i++) {
+      await invoke('note_off', { channel: i });
     }
 
     activeChannels = nextChannels;
