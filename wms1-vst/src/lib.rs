@@ -3,6 +3,11 @@ use std::sync::Arc;
 use wms1_core::{AdsrParams, ChorusType, LfoDestination, LfoWaveform, MasterEffects, ReverbType,
     SoundEngine, Wms1Engine, pitch_depth_cents, volume_depth};
 
+/// MIDIノート番号の総数（0〜127）。MIDIノート番号をそのままチャンネルIDとして使うため
+/// （1ノート=1チャンネル）、発音中チャンネルを走査するループの上限に使う。
+/// 将来MIDI規格でノート番号空間が拡張された場合はここだけ変えればよい。
+const MIDI_NOTE_COUNT: u8 = 128;
+
 /// マスター単位5パラメーターのデフォルト値（`MasterEffects::new()`の内部初期値と一致させる）
 const DEFAULT_REVERB_TIME: u8 = 128;
 const DEFAULT_CHORUS_MOD_RATE: u8 = 128;
@@ -176,7 +181,7 @@ impl Wms1Plugin {
 
     /// 発音中の全チャンネルへ現在のパフォーマンスLFO設定を再適用する
     fn apply_performance_lfo_to_active(&mut self) {
-        for note in 0u8..128 {
+        for note in 0u8..MIDI_NOTE_COUNT {
             self.apply_performance_lfo(note as usize);
         }
     }

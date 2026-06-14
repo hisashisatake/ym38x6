@@ -9,6 +9,11 @@ use ym38x6_core::{
     Ym38x6LfoDestination, Ym38x6Patch,
 };
 
+/// MIDIノート番号の総数（0〜127）。MIDIノート番号をそのままチャンネルIDとして使うため
+/// （1ノート=1チャンネル）、発音中チャンネルを走査するループの上限に使う。
+/// 将来MIDI規格でノート番号空間が拡張された場合はここだけ変えればよい。
+const MIDI_NOTE_COUNT: u8 = 128;
+
 /// マスター単位5パラメーターのデフォルト値（wms1-vstと同じ値、`MasterEffects::new()`の内部初期値と一致）
 const DEFAULT_REVERB_TIME: u8 = 128;
 const DEFAULT_CHORUS_MOD_RATE: u8 = 128;
@@ -473,7 +478,7 @@ impl Ym38x6Plugin {
 
     /// 発音中の全チャンネルへ現在のパフォーマンスLFO設定を再適用する
     fn apply_performance_lfo_to_active(&mut self) {
-        for note in 0u8..128 {
+        for note in 0u8..MIDI_NOTE_COUNT {
             self.apply_performance_lfo(note as usize);
         }
     }
@@ -484,7 +489,7 @@ impl Ym38x6Plugin {
         let combined = (self.data_entry_msb as u16) * 128 + self.data_entry_lsb as u16;
         let f_number = combined.min(8191);
         self.operator_f_number_override[op_index] = f_number;
-        for note in 0u8..128 {
+        for note in 0u8..MIDI_NOTE_COUNT {
             self.engine.set_operator_f_number(note as usize, op_index, f_number);
         }
     }
@@ -717,7 +722,7 @@ impl Plugin for Ym38x6Plugin {
         // 発音中チャンネルへDAWオートメーションの変更とAT/Poly AT Destinationの加算を反映する
         // （MIDIノート番号をそのままチャンネルIDとして使うため0〜127を走査する。
         // 非発音チャンネルへのset_*はno-opになる）
-        for note in 0u8..128 {
+        for note in 0u8..MIDI_NOTE_COUNT {
             let ch_id = note as usize;
             let mut note_patch = patch;
             apply_at_modulation(
@@ -884,12 +889,12 @@ impl Plugin for Ym38x6Plugin {
                         let key_on = cc_to_u7(value) >= 64;
                         if op_index == 3 && !key_on {
                             // Op3（マスター）キーオフ：全チャンネルのNote-Off相当として扱う
-                            for note in 0u8..128 {
+                            for note in 0u8..MIDI_NOTE_COUNT {
                                 self.engine.note_off_operator(note as usize, 3);
                                 self.poly_pressure.remove(&note);
                             }
                         } else {
-                            for note in 0u8..128 {
+                            for note in 0u8..MIDI_NOTE_COUNT {
                                 let ch_id = note as usize;
                                 if key_on {
                                     self.engine.note_on_operator(ch_id, op_index);
