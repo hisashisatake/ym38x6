@@ -167,6 +167,15 @@ impl SoundEngine for Wms1Engine {
         }
     }
 
+    fn retrigger(&mut self, channel: usize, wave_slot: u8, frequency: f32, adsr: AdsrParams) -> bool {
+        if let Some(ch) = self.channels.get_mut(&channel) {
+            *ch = Channel::new(wave_slot, frequency, adsr);
+            true
+        } else {
+            false
+        }
+    }
+
     fn render(&mut self, output: &mut [f32], num_channels: usize) {
         let num_channels = num_channels.max(1);
         let sample_rate = self.sample_rate;

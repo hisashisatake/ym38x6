@@ -361,13 +361,17 @@ impl Plugin for Wms1Plugin {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } if velocity > 0.0 => {
-                    // 同じキーが押しっぱなしの場合は旧チャンネルをリリース
-                    if let Some(&old_id) = self.note_channels.get(&note) {
-                        self.engine.note_off(old_id);
-                    }
                     let freq = 440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0);
-                    let ch_id = self.engine.note_on(wave_slot, freq, adsr);
-                    self.note_channels.insert(note, ch_id);
+                    // 同じキーが押しっぱなしの場合は同じチャンネルでリトリガー
+                    // （リリースを即座にカットしてAttackから再開、実機Key-On挙動に準拠）
+                    let ch_id = if let Some(&old_id) = self.note_channels.get(&note) {
+                        self.engine.retrigger(old_id, wave_slot, freq, adsr);
+                        old_id
+                    } else {
+                        let ch_id = self.engine.note_on(wave_slot, freq, adsr);
+                        self.note_channels.insert(note, ch_id);
+                        ch_id
+                    };
                     self.apply_performance_lfo(ch_id);
                 }
                 NoteEvent::NoteOn { note, .. } | NoteEvent::NoteOff { note, .. } => {
