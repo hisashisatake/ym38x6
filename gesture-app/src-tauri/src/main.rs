@@ -55,6 +55,23 @@ fn note_off(engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>, channel: usize) 
     }
 }
 
+/// 既存チャンネルを同じチャンネルIDのまま即座にキーオフ&キーオンする
+/// （リリースを待たずに即座にカット&再アタック、実機Key-On挙動に準拠）。
+/// チャンネルが存在しない場合はfalseを返す。
+#[tauri::command]
+fn retrigger(
+    engine: tauri::State<'_, Arc<Mutex<EngineHandle>>>,
+    channel: usize,
+    wave_slot: u8,
+    frequency: f32,
+) -> bool {
+    match &mut *engine.lock().unwrap() {
+        EngineHandle::Wms1(e) => e.retrigger(channel, wave_slot, frequency, AdsrParams::default()),
+        // ym38x6_set_program/ym38x6_set_patchで設定したcurrent_patchで再発音する
+        EngineHandle::Ym38x6(e) => e.retrigger(channel, wave_slot, frequency, AdsrParams::default()),
+    }
+}
+
 /// パフォーマンスLFOを設定する。
 /// `waveform`: 0=Triangle / 1=Sine / 2=Square / 3=S&H（Performance LFO Waveform enum準拠）
 /// `destination`: 0=Pitch（ビブラート） / 1=Volume（トレモロ）
@@ -252,6 +269,7 @@ fn main() {
             engine_type,
             note_on,
             note_off,
+            retrigger,
             set_performance_lfo,
             set_master_effects,
             ym38x6_note_on,
