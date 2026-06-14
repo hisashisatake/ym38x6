@@ -1,5 +1,14 @@
 # 38x6 / WMS-1 音源仕様
 
+## チャンネルIDとキーオン契約（sound-core共通）
+
+WMS-1・38x6共通の`SoundEngine`トレイトは`note_on(channel, wave_slot, frequency, adsr)`で発音し、`channel`は呼び出し側（VST/gesture-app等）が指定する安定したIDとして扱う。
+
+- 同じ`channel`へ再度`note_on`すると、発音中・リリース中を問わずエンベロープを即座にカットしてAttackから再開する（実機のKey-On挙動に準拠した「同音チョーク」、insert-or-replace契約）
+- 呼び出し側が「離す→再度押す」を同じ`channel`で行えば、直前のリリーステールが自動的にチョークされ次の発音にかぶらない
+- VST（wms1-vst/ym38x6-vst）はMIDIノート番号をそのまま`channel`として使う
+- gesture-appはコードの声部インデックス（0〜N-1の固定スロット）を`channel`として使う（[spec-app.md](spec-app.md)参照）
+
 ## WMS-1（波形メモリ音源）
 
 フェーズ1で使用するプロトタイプ音源。38x6の1オペレーター分に相当する。
