@@ -15,27 +15,26 @@ Inspired by Ryu Umemoto's YM-2609, which explored a similar "what if" premise us
 ```
 ym38x6/
   sound-core/         # Core primitives — WaveTable, AdsrParams, SoundEngine trait
-  wms1-core/          # WMS-1 engine implementation (depends on sound-core)
-  wms1-vst/           # WMS-1 VST3/CLAP plugin (nice-plug)
+  ym38x6-core/        # 38x6 FM engine implementation (depends on sound-core)
+  ym38x6-vst/         # 38x6 VST3/CLAP plugin (nice-plug)
   gesture-app/        # Composition app (Tauri v2, Windows desktop)
     src/              # Frontend: calibration + gesture UI (HTML/JS)
     src-tauri/        # Backend: cpal WASAPI output, Tauri commands
 ```
 
-`sound-core` and `wms1-core` have zero dependencies on nice-plug, Tauri, or cpal. The audio engine is fully isolated.
+`sound-core` and `ym38x6-core` have zero dependencies on nice-plug, Tauri, or cpal. The audio engine is fully isolated.
 
 ## Sound Engine
 
-### WMS-1 (Phase 1)
+### Waveform Memory Mode (single-operator)
 
-A waveform memory sound source — equivalent to one operator of the 38x6 FM engine. Used as the prototype for verifying the gesture UI and chord logic.
+A waveform memory voice — the 38x6 with only OP1 audible (Algorithm 7, OP2–4 muted at TL=0). It replaces the original standalone WMS-1 prototype crate (`waveform_memory_patch` in `ym38x6-core` builds the patch; selectable via `WAVEFORM_MEMORY_BANK` Bank/Program).
 
 - Internal wave format: 1024 × u16, log encoding (ymfm-compatible)
   - `bit14~0`: −log₂|amplitude| in 4.8 fixed point
   - `bit15`: sign flag
-- Built-in waveforms: sine, square, sawtooth, triangle (slots 0–3)
+- Built-in waveforms: 38x6's native 8 waveforms (slots 0–7)
 - User waveforms: 32 × i8 linear input → auto-converted to internal format (slots 8–255)
-- ADSR envelope: all parameters 0–255 (8-bit unified), exponential rate mapping
 - Unlimited polyphony via `HashMap`-based stable channel IDs
 
 ### 38x6 FM Engine (Phase 3+)
@@ -78,7 +77,7 @@ Selectable handling for notes outside the current scale:
 
 | Phase | Scope |
 |-------|-------|
-| 1 | WMS-1 + Tauri desktop app + gesture UI (done) |
+| 1 | Waveform memory prototype + Tauri desktop app + gesture UI (done) |
 | 2 | Performance LFO + master effects (Reverb/Chorus) |
 | 3 | 38x6 FM engine, waveform selection, detune |
 | 4 | Per-operator F-Number, per-operator key-on |
@@ -96,7 +95,7 @@ cargo check --workspace --message-format=short
 
 # Run tests
 cargo test -p sound-core
-cargo test -p wms1-core
+cargo test -p ym38x6-core
 
 # Run app (first run compiles all dependencies, ~5 min)
 cd gesture-app

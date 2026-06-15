@@ -448,12 +448,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "configparser"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b46dec724fd22199ebde05033a0cbae453bc3b1ecff11eb6a6bb3eec4b90c6a4"
-
-[[package]]
 name = "cookie"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1216,12 +1210,10 @@ dependencies = [
 name = "gesture-app"
 version = "0.1.0"
 dependencies = [
- "configparser",
  "cpal",
  "serde",
  "tauri",
  "tauri-build",
- "wms1-core",
  "ym38x6-core",
 ]
 
@@ -4928,21 +4920,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
-]
-
-[[package]]
-name = "wms1-core"
-version = "0.1.0"
-dependencies = [
- "sound-core",
-]
-
-[[package]]
-name = "wms1-vst"
-version = "0.1.0"
-dependencies = [
- "nice-plug",
- "wms1-core",
 ]
 
 [[package]]

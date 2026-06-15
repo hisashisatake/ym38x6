@@ -16,7 +16,7 @@
 本ドキュメントは設計仕様の全体像（実装ロードマップ・技術スタック・参照資料）を扱う。
 詳細仕様は以下の文書に分割されている。
 
-- [spec-sound.md](spec-sound.md)：38x6 / WMS-1音源エンジンの仕様（パラメーター・MIDI実装・OPQコンバーター等）
+- [spec-sound.md](spec-sound.md)：38x6音源エンジンの仕様（パラメーター・MIDI実装・OPQコンバーター・波形メモリ音源モード等）
 - [spec-app.md](spec-app.md)：作曲支援アプリのUI設計仕様
 
 ---
@@ -24,8 +24,10 @@
 ## 実装ロードマップ
 
 ```
-フェーズ1: WMS-1とTauriデスクトップアプリの基盤（完了）
-  → WMS-1（波形メモリ音源 + ADSR）をwms1-coreに実装
+フェーズ1: 波形メモリ音源とTauriデスクトップアプリの基盤（完了）
+  → プロトタイプとしてWMS-1（波形メモリ音源 + ADSR）をwms1-coreに実装
+    （フェーズ5以降に38x6へ統合し、wms1-core/wms1-vstは廃止。
+     役割はym38x6の「波形メモリ音源モード」＝Algorithm 7・OP1のみ有効が引き継ぐ）
   → 内部波形フォーマット（1024サンプル対数）と変換パイプラインを実装
   → cpalで音声出力
   → マウスによる2Dジェスチャー入力UIの実装
@@ -75,12 +77,6 @@ ym38x6/                  ← ワークスペースルート
     src/lib.rs             ← nice-plug・Tauri・cpal に無依存な純粋Rustロジック
                              波形変換パイプライン（32サンプルi8 → 1024サンプル対数フォーマット）
 
-  wms1-core/             ← WMS-1エンジン実装（sound-coreに依存）
-    Cargo.toml
-    src/lib.rs             ← Wms1Engine（波形オシレーター + ADSRエンベロープ + チャンネル管理）
-
-  wms1-vst/              ← WMS-1 VST3/CLAPプラグイン（nice-plug）
-
   ym38x6-core/           ← 38x6 FMエンジン実装（sound-coreに依存）
     Cargo.toml
     src/lib.rs             ← Ym38x6Engine（4opFM合成 + フィルター + 音色LFO + チャンネル管理）
@@ -115,7 +111,7 @@ ym38x6/                  ← ワークスペースルート
 アプリ:         Tauri（VST3/CLAP両対応）
 音声出力:       cpal（デスクトップ）/ Core Audio（iOS、将来）
 参照実装:       ymfm（C++、BSD 3-Clause）
-VSTプラグイン:  nice-plug（wms1-vst・ym38x6-vstともに実装済み）
+VSTプラグイン:  nice-plug（ym38x6-vstに実装済み）
 ターゲット:     Windowsデスクトップ → タブレット（iOS/Android）→ VST
 ```
 

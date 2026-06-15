@@ -15,7 +15,8 @@ use operator::Operator;
 // Ym38x6Patch::operators / set_operator_paramsの型として外部に公開する
 pub use operator::OperatorParams;
 pub use preset::{
-    gm2_bank0_patch, placeholder_patch, presets_dir, Preset, PresetBank, PresetEntry, PresetFile,
+    gm2_bank0_patch, placeholder_patch, presets_dir, waveform_memory_patch, Preset, PresetBank,
+    PresetEntry, PresetFile, WAVEFORM_MEMORY_BANK,
 };
 use serde::{Deserialize, Serialize};
 use sound_core::{
@@ -446,7 +447,7 @@ impl Ym38x6Engine {
         }
     }
 
-    /// スロット8〜255にユーザー定義波形をロードする（wms1-coreと同一シグネチャ）。
+    /// スロット8〜255にユーザー定義波形をロードする。
     pub fn set_user_wave(&mut self, slot: u8, input: &[i8; 32]) {
         assert!(slot >= 8, "slots 0-7 are reserved for builtin waves");
         self.wave_tables[slot as usize] = Some(convert_wave_32(input));

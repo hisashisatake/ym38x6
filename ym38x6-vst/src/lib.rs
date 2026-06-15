@@ -14,7 +14,7 @@ use ym38x6_core::{
 /// 将来MIDI規格でノート番号空間が拡張された場合はここだけ変えればよい。
 const MIDI_NOTE_COUNT: u8 = 128;
 
-/// マスター単位5パラメーターのデフォルト値（wms1-vstと同じ値、`MasterEffects::new()`の内部初期値と一致）
+/// マスター単位5パラメーターのデフォルト値（`MasterEffects::new()`の内部初期値と一致）
 const DEFAULT_REVERB_TIME: u8 = 128;
 const DEFAULT_CHORUS_MOD_RATE: u8 = 128;
 const DEFAULT_CHORUS_MOD_DEPTH: u8 = 128;
@@ -305,7 +305,7 @@ struct Ym38x6Params {
     #[nested(array, group = "Operator")]
     pub operators: [OperatorVstParams; 4],
 
-    // ---- マスター単位（5個、3.0のwms1-vstと同型） ----
+    // ---- マスター単位（5個、MasterEffectsの5パラメーターに対応） ----
     #[id = "rev_time"]
     pub reverb_time: IntParam,
     #[id = "cho_rate"]

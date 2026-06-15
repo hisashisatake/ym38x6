@@ -1,8 +1,6 @@
 [workspace]
 members = [
     "sound-core",
-    "wms1-core",
-    "wms1-vst",
     "ym38x6-core",
     "ym38x6-vst",
     "gesture-app/src-tauri",

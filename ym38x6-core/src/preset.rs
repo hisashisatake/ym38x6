@@ -4,6 +4,45 @@ use std::path::{Path, PathBuf};
 
 use crate::operator::OperatorParams;
 use crate::Ym38x6Patch;
+use sound_core::AdsrParams;
+
+/// 波形メモリ音色専用のBank Select番号。このバンクを選ぶと、Program番号(0〜127)を
+/// 波形スロット番号とみなし、`waveform_memory_patch`で1オペレーター音色を生成する
+/// （0〜7=ビルトイン波形、8〜127=ユーザー波形スロット）。GM2 Bank0(=0)や暫定
+/// プレースホルダーと衝突しないよう、十分大きな予約値を用いる。
+pub const WAVEFORM_MEMORY_BANK: u16 = 16383;
+
+/// 旧WMS-1相当の「波形メモリ音色」を生成する。Algorithm 7(全並列・変調なし)で
+/// OP1(operators[0])のみを可聴にし、OP2〜4はTL=0(≈-95dB、実質無音)でミュートする。
+/// ADSRは`AdsrParams`(0〜255)をOP1のEGへ素直にマッピングする(AR=attack/D1R=decay/
+/// D1L=sustain/RR=release、D2R=0で第2減衰なし)。チャンネル側はデフォルト
+/// (フィルター全開・音色LFO無効)。WMS-1の線形ADSRとはOPM準拠カーブの分だけ触感が変わる。
+pub fn waveform_memory_patch(waveform: u8, adsr: AdsrParams) -> Ym38x6Patch {
+    let mut patch = Ym38x6Patch::default();
+    patch.channel.algorithm = 7;
+
+    // OP1: 唯一の可聴オペレーター。波形とADSRを反映する。
+    patch.operators[0] = OperatorParams {
+        tl: 255,
+        ar: adsr.attack,
+        d1r: adsr.decay,
+        d2r: 0,
+        d1l: adsr.sustain,
+        rr: adsr.release,
+        mul: 1,
+        dt1: 128,
+        ksr: 0,
+        am_enable: false,
+        velocity_sensitivity: 0,
+        waveform,
+    };
+    // OP2〜4: TL=0でミュート(Algorithm 7では全Opがキャリアのため、音を消すにはTLを最小にする)。
+    let muted = OperatorParams { tl: 0, ..patch.operators[0] };
+    patch.operators[1] = muted;
+    patch.operators[2] = muted;
+    patch.operators[3] = muted;
+    patch
+}
 
 /// ユーザープリセットの読み込み元ディレクトリ（暫定）。
 /// `%APPDATA%\ym38x6\presets`が存在すればそちらを使い、無ければExplorerで見つけやすい
@@ -344,11 +383,16 @@ impl PresetBank {
 
     /// (bank, program)に対応するパッチを解決する（MIDI Program Change・VST3
     /// Programパラメーター・gesture-appのProgram選択コマンドから共通で使う）。
-    /// 優先順位: ユーザープリセット(.38x6) > GM2 Bank0手動チューニング(該当programのみ)
-    /// > 暫定プレースホルダーパッチ
+    /// 優先順位: ユーザープリセット(.38x6) > 波形メモリバンク(`WAVEFORM_MEMORY_BANK`、
+    /// programを波形スロットとして1オペレーター音色を生成) > GM2 Bank0手動チューニング
+    /// (該当programのみ) > 暫定プレースホルダーパッチ
     pub fn patch_for_program(&self, bank: u16, program: u8) -> Ym38x6Patch {
         self.get(bank, program)
             .map(|preset| preset.patch)
+            .or_else(|| {
+                (bank == WAVEFORM_MEMORY_BANK)
+                    .then(|| waveform_memory_patch(program, AdsrParams::default()))
+            })
             .or_else(|| (bank == 0).then(|| gm2_bank0_patch(program)).flatten())
             .unwrap_or_else(|| placeholder_patch(bank, program))
     }
@@ -405,6 +449,36 @@ mod tests {
             assert!(buf.iter().all(|&s| s.is_finite()), "program {program}: non-finite sample");
             assert!(buf.iter().any(|&s| s != 0.0), "program {program} is silent");
         }
+    }
+
+    #[test]
+    fn waveform_memory_patch_has_single_audible_operator() {
+        let patch = waveform_memory_patch(3, AdsrParams::default());
+        assert_eq!(patch.channel.algorithm, 7);
+        assert!(patch.operators[0].tl > 0, "OP1 should be audible");
+        assert_eq!(patch.operators[0].waveform, 3);
+        for op in &patch.operators[1..] {
+            assert_eq!(op.tl, 0, "OP2-4 should be muted");
+        }
+    }
+
+    #[test]
+    fn waveform_memory_patch_is_audible_and_finite() {
+        for waveform in 0u8..8 {
+            let mut engine = Ym38x6Engine::new(44100.0);
+            engine.note_on_with_velocity(0, 440.0, 127, waveform_memory_patch(waveform, AdsrParams::default()));
+            let mut buf = vec![0.0f32; 512];
+            engine.render(&mut buf, 1);
+            assert!(buf.iter().all(|&s| s.is_finite()), "waveform {waveform}: non-finite sample");
+            assert!(buf.iter().any(|&s| s != 0.0), "waveform {waveform} is silent");
+        }
+    }
+
+    #[test]
+    fn patch_for_program_resolves_waveform_memory_bank() {
+        let bank = PresetBank::default();
+        let patch = bank.patch_for_program(WAVEFORM_MEMORY_BANK, 2);
+        assert_eq!(patch, waveform_memory_patch(2, AdsrParams::default()));
     }
 
     #[test]

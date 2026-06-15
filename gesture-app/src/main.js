@@ -24,7 +24,12 @@ let mouseHeld      = false;
 let mousePos       = { x: 0, y: 0 };
 let currentWaveSlot = 0;
 
-const WAVE_NAMES = ['sine', 'square', 'saw', 'tri'];
+// ym38x6ビルトイン波形（スロット0〜7、waveform.rs参照）。波形メモリ音色のProgram番号に対応。
+const WAVE_NAMES = ['sine', 'half-sine', 'abs-sine', 'square', 'saw', 'quantized', 'pulse', 'octave'];
+
+// 波形メモリ音色専用のBank Select番号（ym38x6-coreのWAVEFORM_MEMORY_BANKと一致させる）。
+// このバンクではProgram番号を波形スロットとみなし、1オペレーター音色を生成する。
+const WAVEFORM_MEMORY_BANK = 16383;
 
 // ─────────────────────────────────────────────
 // パフォーマンスLFO（ビブラート/トレモロ）
@@ -43,7 +48,7 @@ let lfoDestination = LFO_DEST_PITCH;
 let lfoRate        = LFO_RATE_DEFAULT;
 
 async function applyPerformanceLfo(channel) {
-  await invoke('set_performance_lfo', {
+  await invoke('ym38x6_set_performance_lfo', {
     channel,
     rate: lfoRate,
     delay: LFO_DELAY,
@@ -63,25 +68,23 @@ async function applyPerformanceLfoToActiveChannels() {
 
 // ─────────────────────────────────────────────
 // Program切り替え（動作確認用の簡易UI、数値変更で即時反映）
-// ym38x6: Bank/Programでプリセットを切り替え。wms1: Bankは無視し、Programを波形選択に使う
+// Bank/Programでcurrent_patchを切り替える。既定Bank=WAVEFORM_MEMORY_BANKでは
+// Programが波形スロット（0〜7=ビルトイン波形）に対応する1オペレーター音色になる。
 // ─────────────────────────────────────────────
-(async () => {
-  const engineType = await invoke('engine_type');
+(() => {
   const bankEl = document.getElementById('program-bank');
   const numEl  = document.getElementById('program-num');
 
   async function applyProgram() {
+    const bank = Math.max(0, Math.min(16383, parseInt(bankEl.value, 10) || 0));
     const program = Math.max(0, Math.min(127, parseInt(numEl.value, 10) || 0));
-    if (engineType === 'ym38x6') {
-      const bank = Math.max(0, Math.min(16383, parseInt(bankEl.value, 10) || 0));
-      await invoke('ym38x6_set_program', { bank, program });
-    } else {
-      currentWaveSlot = program % WAVE_NAMES.length;
-      lastChordKey = null; // 同じコードでも即座に音色変更させる
-    }
+    currentWaveSlot = program; // 波形メモリバンクでは表示・互換用にProgram=波形スロット
+    await invoke('ym38x6_set_program', { bank, program });
+    lastChordKey = null; // 同じコードでも即座に音色変更させる
   }
   bankEl.addEventListener('input', applyProgram);
   numEl.addEventListener('input', applyProgram);
+  applyProgram(); // 起動時に既定の音色（波形メモリ）を反映
 })();
 
 // ─────────────────────────────────────────────

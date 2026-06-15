@@ -153,7 +153,7 @@ impl Default for AdsrParams {
 // SoundEngine trait
 // ---------------------------------------------------------------------------
 
-/// Common interface shared by WMS-1 and the 38x6 FM engine.
+/// Common interface implemented by the 38x6 FM engine (and any future sound engine).
 ///
 /// `Send` is required so the engine can be moved to the audio thread.
 pub trait SoundEngine: Send {

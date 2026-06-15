@@ -1,7 +1,0 @@
-[package]
-name = "wms1-core"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-sound-core = { path = "../sound-core" }
