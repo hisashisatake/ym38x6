@@ -22,13 +22,18 @@ let isUpdating     = false;
 let pendingPos     = null;   // {x,y} — mousemove から animation tick へ橋渡し
 let mouseHeld      = false;
 let mousePos       = { x: 0, y: 0 };
-let currentWaveSlot = 0;
+let currentProgram = 0;
 
 // ym38x6ビルトイン波形（スロット0〜7、waveform.rs参照）。波形メモリ音色のProgram番号に対応。
 const WAVE_NAMES = ['sine', 'half-sine', 'abs-sine', 'square', 'saw', 'quantized', 'pulse', 'octave'];
 
+// Bank=0（GM2 Bank0）で手動チューニング済みのProgram名（preset.rsのgm2_bank0_patch参照）。
+// 未掲載のProgramはplaceholder_patchへフォールバックする。
+const FM_PROGRAM_NAMES = { 0: 'Acoustic Grand Piano', 4: 'Electric Piano 1', 80: 'Lead 1 (Square)' };
+
 // 波形メモリ音色専用のBank Select番号（ym38x6-coreのWAVEFORM_MEMORY_BANKと一致させる）。
-// このバンクではProgram番号を波形スロットとみなし、1オペレーター音色を生成する。
+// Program 0〜7=ビルトイン波形+ピアノ風ADSR、8〜15=ビルトイン波形+リード風ADSR、
+// 16〜127=ユーザー波形スロット（preset.rsのwaveform_memory_params_for_program参照）。
 const WAVEFORM_MEMORY_BANK = 16383;
 
 // ─────────────────────────────────────────────
@@ -67,24 +72,66 @@ async function applyPerformanceLfoToActiveChannels() {
 }
 
 // ─────────────────────────────────────────────
-// Program切り替え（動作確認用の簡易UI、数値変更で即時反映）
-// Bank/Programでcurrent_patchを切り替える。既定Bank=WAVEFORM_MEMORY_BANKでは
-// Programが波形スロット（0〜7=ビルトイン波形）に対応する1オペレーター音色になる。
+// 音源モード切替（波形メモリ ⇔ Bank/Program手動指定）とProgram切り替え
+// （動作確認用の簡易UI）。デフォルトはFM音源（チェックOFF）。チェックを切り替えるたびに
+// 切り替え前のBank/Programをそのモード用に退避し、切り替え後のモードで前回使っていた
+// Bank/Programを復元する（FM⇔波形メモリのどちら向きの切替でも双方向に復元される）。
+// 「波形メモリ」チェックON時はBank欄をWAVEFORM_MEMORY_BANKに固定して編集不可にする。
 // ─────────────────────────────────────────────
 (() => {
-  const bankEl = document.getElementById('program-bank');
-  const numEl  = document.getElementById('program-num');
+  const wmToggle = document.getElementById('waveform-memory-toggle');
+  const bankEl   = document.getElementById('program-bank');
+  const numEl    = document.getElementById('program-num');
+  const labelEl  = document.getElementById('program-label');
+
+  // 各モードで最後に使っていたBank/Program（モード切替時の復元先）
+  let savedFmBank    = parseInt(bankEl.value, 10) || 0;
+  let savedFmProgram = parseInt(numEl.value, 10) || 0;
+  let savedWmProgram = 0;
+
+  function programName(bank, program) {
+    if (bank === WAVEFORM_MEMORY_BANK) {
+      if (program < 8)  return `${WAVE_NAMES[program]} (piano)`;
+      if (program < 16) return `${WAVE_NAMES[program - 8]} (lead)`;
+      return `波形 #${program} (user)`;
+    }
+    if (bank === 0) return FM_PROGRAM_NAMES[program] ?? `FM #${program}（placeholder）`;
+    return `Bank ${bank} / Program ${program}`;
+  }
+
+  function syncBankField() {
+    if (wmToggle.checked) {
+      // FM → 波形メモリ：現在のFM Bank/Programを退避し、波形メモリ側の前回Programを復元
+      savedFmBank    = parseInt(bankEl.value, 10) || 0;
+      savedFmProgram = parseInt(numEl.value, 10) || 0;
+      bankEl.value = WAVEFORM_MEMORY_BANK;
+      numEl.value  = savedWmProgram;
+    } else {
+      // 波形メモリ → FM：現在のProgramを退避し、FM側のBank/Programを復元
+      savedWmProgram = parseInt(numEl.value, 10) || 0;
+      bankEl.value = savedFmBank;
+      numEl.value  = savedFmProgram;
+    }
+    bankEl.disabled = wmToggle.checked;
+  }
 
   async function applyProgram() {
-    const bank = Math.max(0, Math.min(16383, parseInt(bankEl.value, 10) || 0));
+    const bank = wmToggle.checked
+      ? WAVEFORM_MEMORY_BANK
+      : Math.max(0, Math.min(16383, parseInt(bankEl.value, 10) || 0));
     const program = Math.max(0, Math.min(127, parseInt(numEl.value, 10) || 0));
-    currentWaveSlot = program; // 波形メモリバンクでは表示・互換用にProgram=波形スロット
+    currentProgram = program;
+    labelEl.textContent = programName(bank, program);
     await invoke('ym38x6_set_program', { bank, program });
     lastChordKey = null; // 同じコードでも即座に音色変更させる
   }
+
+  wmToggle.addEventListener('change', () => { syncBankField(); applyProgram(); });
   bankEl.addEventListener('input', applyProgram);
   numEl.addEventListener('input', applyProgram);
-  applyProgram(); // 起動時に既定の音色（波形メモリ）を反映
+
+  syncBankField();
+  applyProgram(); // 起動時に既定の音色（FM音源 Bank0/Program0）を反映
 })();
 
 // ─────────────────────────────────────────────
@@ -205,7 +252,7 @@ async function updateChord(px, py) {
     // 押し直し（前のコードを離した後の再発音）でも同じスロットIDへnote_onするため、
     // エンジン側で直前のリリーステールが即座にカット&再アタックされる（同音チョーク）。
     for (let i = 0; i < frequencies.length; i++) {
-      await invoke('note_on', { channel: i, waveSlot: currentWaveSlot, frequency: frequencies[i] });
+      await invoke('note_on', { channel: i, waveSlot: currentProgram, frequency: frequencies[i] });
       nextChannels.push(i);
       await applyPerformanceLfo(i);
     }

@@ -6,9 +6,10 @@ use crate::operator::OperatorParams;
 use crate::Ym38x6Patch;
 use sound_core::AdsrParams;
 
-/// 波形メモリ音色専用のBank Select番号。このバンクを選ぶと、Program番号(0〜127)を
-/// 波形スロット番号とみなし、`waveform_memory_patch`で1オペレーター音色を生成する
-/// （0〜7=ビルトイン波形、8〜127=ユーザー波形スロット）。GM2 Bank0(=0)や暫定
+/// 波形メモリ音色専用のBank Select番号。このバンクを選ぶと、Program番号(0〜127)から
+/// `waveform_memory_params_for_program`で(波形, ADSR)を決定し、`waveform_memory_patch`で
+/// 1オペレーター音色を生成する（0〜7=ビルトイン波形+ピアノ風ADSR、8〜15=ビルトイン波形+
+/// リード風ADSR、16〜127=ユーザー波形スロット+デフォルトADSR）。GM2 Bank0(=0)や暫定
 /// プレースホルダーと衝突しないよう、十分大きな予約値を用いる。
 pub const WAVEFORM_MEMORY_BANK: u16 = 16383;
 
@@ -42,6 +43,34 @@ pub fn waveform_memory_patch(waveform: u8, adsr: AdsrParams) -> Ym38x6Patch {
     patch.operators[2] = muted;
     patch.operators[3] = muted;
     patch
+}
+
+/// 波形メモリ専用バンク（Program 0〜7）の「ピアノ風」ADSR。
+/// アタック即時(255)、緩やかな減衰(decay)で中程度のサスティンレベルへ落ち着く
+/// （鍵盤を保持していても音量が下がっていく、減衰楽器寄りの質感）。
+fn waveform_memory_piano_adsr() -> AdsrParams {
+    AdsrParams { attack: 255, decay: 80, sustain: 120, release: 130 }
+}
+
+/// 波形メモリ専用バンク（Program 8〜15）の「リード風」ADSR。
+/// decay=0・sustain=255で減衰せず、キーを保持する間は最大レベルを維持する
+/// 無限サスティン（`lead_1_square_patch`と同じ考え方）。RRはピアノ風ADSRと同じ値にし、
+/// キーオフ後の余韻の長さを揃える。
+fn waveform_memory_lead_adsr() -> AdsrParams {
+    AdsrParams { attack: 255, decay: 0, sustain: 255, release: 130 }
+}
+
+/// 波形メモリ専用バンクのProgram番号から`waveform_memory_patch`への
+/// (waveform, ADSR)を決定する。
+/// - 0〜7: ビルトイン波形(Program) + ピアノ風ADSR
+/// - 8〜15: ビルトイン波形(Program-8) + リード風ADSR
+/// - 16〜127: ユーザー波形スロット(Program) + デフォルトADSR
+fn waveform_memory_params_for_program(program: u8) -> (u8, AdsrParams) {
+    match program {
+        0..=7 => (program, waveform_memory_piano_adsr()),
+        8..=15 => (program - 8, waveform_memory_lead_adsr()),
+        _ => (program, AdsrParams::default()),
+    }
 }
 
 /// ユーザープリセットの読み込み元ディレクトリ（暫定）。
@@ -384,14 +413,16 @@ impl PresetBank {
     /// (bank, program)に対応するパッチを解決する（MIDI Program Change・VST3
     /// Programパラメーター・gesture-appのProgram選択コマンドから共通で使う）。
     /// 優先順位: ユーザープリセット(.38x6) > 波形メモリバンク(`WAVEFORM_MEMORY_BANK`、
-    /// programを波形スロットとして1オペレーター音色を生成) > GM2 Bank0手動チューニング
-    /// (該当programのみ) > 暫定プレースホルダーパッチ
+    /// `waveform_memory_params_for_program`で(波形,ADSR)を決定し1オペレーター音色を生成) >
+    /// GM2 Bank0手動チューニング(該当programのみ) > 暫定プレースホルダーパッチ
     pub fn patch_for_program(&self, bank: u16, program: u8) -> Ym38x6Patch {
         self.get(bank, program)
             .map(|preset| preset.patch)
             .or_else(|| {
-                (bank == WAVEFORM_MEMORY_BANK)
-                    .then(|| waveform_memory_patch(program, AdsrParams::default()))
+                (bank == WAVEFORM_MEMORY_BANK).then(|| {
+                    let (waveform, adsr) = waveform_memory_params_for_program(program);
+                    waveform_memory_patch(waveform, adsr)
+                })
             })
             .or_else(|| (bank == 0).then(|| gm2_bank0_patch(program)).flatten())
             .unwrap_or_else(|| placeholder_patch(bank, program))
@@ -477,8 +508,21 @@ mod tests {
     #[test]
     fn patch_for_program_resolves_waveform_memory_bank() {
         let bank = PresetBank::default();
-        let patch = bank.patch_for_program(WAVEFORM_MEMORY_BANK, 2);
-        assert_eq!(patch, waveform_memory_patch(2, AdsrParams::default()));
+
+        // Program 0〜7: ビルトイン波形(Program) + ピアノ風ADSR（減衰してサスティンへ落ち着く）
+        let piano = bank.patch_for_program(WAVEFORM_MEMORY_BANK, 2);
+        assert_eq!(piano, waveform_memory_patch(2, waveform_memory_piano_adsr()));
+        assert!(piano.operators[0].d1r > 0, "piano ADSR should decay");
+
+        // Program 8〜15: ビルトイン波形(Program-8) + リード風ADSR（減衰なしの無限サスティン）
+        let lead = bank.patch_for_program(WAVEFORM_MEMORY_BANK, 10);
+        assert_eq!(lead, waveform_memory_patch(2, waveform_memory_lead_adsr()));
+        assert_eq!(lead.operators[0].d1r, 0, "lead ADSR should not decay");
+        assert_eq!(lead.operators[0].d1l, 255, "lead ADSR sustains at max level");
+
+        // Program 16〜127: ユーザー波形スロット(Program) + デフォルトADSR
+        let user_slot = bank.patch_for_program(WAVEFORM_MEMORY_BANK, 20);
+        assert_eq!(user_slot, waveform_memory_patch(20, AdsrParams::default()));
     }
 
     #[test]
