@@ -5,6 +5,7 @@
 //! psr2x6 <input def_seqs.h> <output_dir> [--bank <N>]
 //! ```
 //! - 入力・出力ファイルは本クレートには同梱しない（パスは引数指定）。
+//! - `--bank` の既定は `WAVEFORM_MEMORY_BANK + 1`（Bank 0はML自動生成用に空けておく）。
 //! - 出力は `<output_dir>/b<bank>.38x6`（128件超は連番バンクへ分割）。
 //!
 //! 実装状況: 変換ロジック（[`conv`]）とパイプラインは実装済み・テスト済み。
@@ -56,7 +57,8 @@ fn run(args: &[String]) -> Result<(), String> {
 
 fn parse_args(args: &[String]) -> Result<(PathBuf, PathBuf, u16), String> {
     let mut positional: Vec<&String> = Vec::new();
-    let mut start_bank: u16 = 1; // 既定: Bank 1（Bank 0はML自動生成用に空けておく）
+    // 既定: 波形メモリ音源バンクの直後(WAVEFORM_MEMORY_BANK+1)。Bank 0はML自動生成用に空けておく
+    let mut start_bank: u16 = ym38x6_core::WAVEFORM_MEMORY_BANK + 1;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {

@@ -47,7 +47,8 @@
   → ym38x6-ml: 目標音声 → FMパラメーター逆算（インバース合成）
   → 38x6エンジンのPythonバインディング（PyO3 + maturin）
   → ランダムサンプリングによる合成データ生成・学習
-  → GM2プログラムマップ準拠のBank 0音色セットをMLで自動生成（OPQ実機プリセットの直接コンバートは行わない）
+  → GM2プログラムマップ準拠のBank 0音色セットをMLで自動生成（Bank 0には実機プリセットを直接流用しない）
+  → OPQ/PSR-70実機音色はtools/psr2x6で別バンク（WAVEFORM_MEMORY_BANK+1以降）へ変換し、ym38x6-mlのシード/教師として用いる
   → Bank Select / Program Change 実装
   → 同一リポジトリ内の ym38x6-ml/ に収録
 
