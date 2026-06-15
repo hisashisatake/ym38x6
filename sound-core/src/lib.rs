@@ -7,6 +7,13 @@ pub use lfo::{LfoWaveform, PerformanceLfo, LfoDestination, PerformanceLfoTarget,
     pitch_depth_cents, volume_depth};
 
 // ---------------------------------------------------------------------------
+// Master effects (Reverb / Chorus)
+// ---------------------------------------------------------------------------
+
+pub mod effects;
+pub use effects::{ChorusType, MasterEffects, ReverbType};
+
+// ---------------------------------------------------------------------------
 // Wave table format (ymfm-compatible log encoding)
 // ---------------------------------------------------------------------------
 
@@ -95,6 +102,17 @@ pub fn gen_triangle() -> WaveTable {
     t
 }
 
+/// Build a wave table from an arbitrary waveform function.
+/// `f` maps phase (0.0–1.0) to amplitude (-1.0–1.0); out-of-range values are clamped.
+pub fn gen_from_fn(f: impl Fn(f32) -> f32) -> WaveTable {
+    let mut t = WaveTable::new();
+    for i in 0..WAVE_SIZE {
+        let phase = i as f32 / WAVE_SIZE as f32;
+        t.data[i] = linear_to_log(f(phase).clamp(-1.0, 1.0));
+    }
+    t
+}
+
 /// Convert 32 × i8 user wave input to internal 1024-entry log format.
 pub fn convert_wave_32(input: &[i8; 32]) -> WaveTable {
     let mut t = WaveTable::new();
@@ -135,11 +153,14 @@ impl Default for AdsrParams {
 // SoundEngine trait
 // ---------------------------------------------------------------------------
 
-/// Common interface shared by WMS-1 and the 38x6 FM engine.
+/// Common interface implemented by the 38x6 FM engine (and any future sound engine).
 ///
 /// `Send` is required so the engine can be moved to the audio thread.
 pub trait SoundEngine: Send {
-    fn note_on(&mut self, wave_slot: u8, frequency: f32, adsr: AdsrParams) -> usize;
+    /// 指定チャンネルIDへ即座にキーオンする（既存の内容があれば上書き）。
+    /// 同じIDで発音中/リリース中のチャンネルが既にあっても、エンベロープを即座にカットして
+    /// Attackから再開する（実機FM音源のKey-On時の挙動に準拠＝同音チョーク）。
+    fn note_on(&mut self, channel: usize, wave_slot: u8, frequency: f32, adsr: AdsrParams);
     fn note_off(&mut self, channel: usize);
     fn render(&mut self, output: &mut [f32], num_channels: usize);
 }
@@ -167,5 +188,14 @@ mod tests {
         let input = [0i8; 32];
         let t = convert_wave_32(&input);
         assert_eq!(t.len(), WAVE_SIZE);
+    }
+
+    #[test]
+    fn gen_from_fn_matches_gen_sine() {
+        let sine = gen_sine();
+        let from_fn = gen_from_fn(|p| (2.0 * std::f32::consts::PI * p).sin());
+        for i in 0..WAVE_SIZE {
+            assert!((sine.sample_at(i) - from_fn.sample_at(i)).abs() < 1e-6);
+        }
     }
 }

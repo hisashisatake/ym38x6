@@ -136,7 +136,7 @@ pub enum LfoDestination {
     Volume,
 }
 
-/// パフォーマンスLFOの適用先。WMS-1・38x6の各ボイスが実装する。
+/// パフォーマンスLFOの適用先。38x6の各ボイスが実装する。
 pub trait PerformanceLfoTarget {
     /// Destination=Pitch（ビブラート）。`cents`はピッチオフセット（セント単位）。
     fn apply_pitch_modulation(&mut self, cents: f32);

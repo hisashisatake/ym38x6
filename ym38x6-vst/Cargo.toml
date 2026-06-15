@@ -1,0 +1,11 @@
+[package]
+name = "ym38x6-vst"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nice-plug = "0.1.9"
+ym38x6-core = { path = "../ym38x6-core" }

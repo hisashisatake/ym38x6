@@ -24,7 +24,12 @@ let mouseHeld      = false;
 let mousePos       = { x: 0, y: 0 };
 let currentWaveSlot = 0;
 
-const WAVE_NAMES = ['sine', 'square', 'saw', 'tri'];
+// ym38x6ビルトイン波形（スロット0〜7、waveform.rs参照）。波形メモリ音色のProgram番号に対応。
+const WAVE_NAMES = ['sine', 'half-sine', 'abs-sine', 'square', 'saw', 'quantized', 'pulse', 'octave'];
+
+// 波形メモリ音色専用のBank Select番号（ym38x6-coreのWAVEFORM_MEMORY_BANKと一致させる）。
+// このバンクではProgram番号を波形スロットとみなし、1オペレーター音色を生成する。
+const WAVEFORM_MEMORY_BANK = 16383;
 
 // ─────────────────────────────────────────────
 // パフォーマンスLFO（ビブラート/トレモロ）
@@ -43,7 +48,7 @@ let lfoDestination = LFO_DEST_PITCH;
 let lfoRate        = LFO_RATE_DEFAULT;
 
 async function applyPerformanceLfo(channel) {
-  await invoke('set_performance_lfo', {
+  await invoke('ym38x6_set_performance_lfo', {
     channel,
     rate: lfoRate,
     delay: LFO_DELAY,
@@ -60,6 +65,27 @@ async function applyPerformanceLfoToActiveChannels() {
     await applyPerformanceLfo(ch);
   }
 }
+
+// ─────────────────────────────────────────────
+// Program切り替え（動作確認用の簡易UI、数値変更で即時反映）
+// Bank/Programでcurrent_patchを切り替える。既定Bank=WAVEFORM_MEMORY_BANKでは
+// Programが波形スロット（0〜7=ビルトイン波形）に対応する1オペレーター音色になる。
+// ─────────────────────────────────────────────
+(() => {
+  const bankEl = document.getElementById('program-bank');
+  const numEl  = document.getElementById('program-num');
+
+  async function applyProgram() {
+    const bank = Math.max(0, Math.min(16383, parseInt(bankEl.value, 10) || 0));
+    const program = Math.max(0, Math.min(127, parseInt(numEl.value, 10) || 0));
+    currentWaveSlot = program; // 波形メモリバンクでは表示・互換用にProgram=波形スロット
+    await invoke('ym38x6_set_program', { bank, program });
+    lastChordKey = null; // 同じコードでも即座に音色変更させる
+  }
+  bankEl.addEventListener('input', applyProgram);
+  numEl.addEventListener('input', applyProgram);
+  applyProgram(); // 起動時に既定の音色（波形メモリ）を反映
+})();
 
 // ─────────────────────────────────────────────
 // Canvas
@@ -171,22 +197,31 @@ async function updateChord(px, py) {
 
   isUpdating = true;
   try {
-    await stopChord();
-    // マウスが await 中に離された場合は発音しない
-    if (!mouseHeld) return;
-    for (const interval of chord.intervals) {
-      const ch = await invoke('note_on', {
-        waveSlot: currentWaveSlot,
-        frequency: midiFreq(root.midi + interval),
-      });
-      if (!mouseHeld) {
-        // note_on を開始したが直後に離された — すぐ止める
-        await invoke('note_off', { channel: ch });
-        return;
-      }
-      activeChannels.push(ch);
-      await applyPerformanceLfo(ch);
+    const frequencies = chord.intervals.map(interval => midiFreq(root.midi + interval));
+    const prevCount = activeChannels.length;
+    const nextChannels = [];
+
+    // 各声部は固定スロット（声部インデックス i）をチャンネルIDとして使う。
+    // 押し直し（前のコードを離した後の再発音）でも同じスロットIDへnote_onするため、
+    // エンジン側で直前のリリーステールが即座にカット&再アタックされる（同音チョーク）。
+    for (let i = 0; i < frequencies.length; i++) {
+      await invoke('note_on', { channel: i, waveSlot: currentWaveSlot, frequency: frequencies[i] });
+      nextChannels.push(i);
+      await applyPerformanceLfo(i);
     }
+    // 旧コードの方が声部が多い場合、余ったスロットをキーオフ
+    for (let i = frequencies.length; i < prevCount; i++) {
+      await invoke('note_off', { channel: i });
+    }
+
+    activeChannels = nextChannels;
+
+    // マウスが await 中に離された場合は発音しない
+    if (!mouseHeld) {
+      await stopChord();
+      return;
+    }
+
     lastChordKey = key;
     chordEl.textContent = root.name + chord.suffix;
     hintEl.textContent  = chordParamLabel(chordParam);
@@ -251,11 +286,6 @@ window.addEventListener('keydown', async (e) => {
     lfoRate = Math.min(255, lfoRate + LFO_RATE_STEP);
     await applyPerformanceLfoToActiveChannels();
   }
-  const slot = parseInt(e.key) - 1;
-  if (slot >= 0 && slot <= 3) {
-    currentWaveSlot = slot;
-    lastChordKey = null; // 同じコードでも即座に音色変更させる
-  }
 });
 
 // ─────────────────────────────────────────────
@@ -294,7 +324,6 @@ function draw() {
   } else {
     drawCalibLayer(W, H);
   }
-  drawWaveIndicator(W, H);
   drawLfoIndicator(W, H);
 }
 
@@ -417,16 +446,6 @@ function drawChordScale(W, H) {
   ctx.textAlign = 'right';
   ctx.fillText('明るい →', startX + step * (total - 1) + 60, y);
 
-}
-
-function drawWaveIndicator(W, H) {
-  ctx.textAlign = 'right';
-  ctx.font = '13px monospace';
-  for (let i = 0; i < WAVE_NAMES.length; i++) {
-    const isActive = i === currentWaveSlot;
-    ctx.fillStyle = isActive ? '#fa4' : '#444';
-    ctx.fillText(`${i + 1}:${WAVE_NAMES[i]}`, W - 16, H - 16 - (WAVE_NAMES.length - 1 - i) * 20);
-  }
 }
 
 function drawLfoIndicator() {

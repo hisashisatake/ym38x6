@@ -9,5 +9,5 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 cpal = "0.15"
-wms1-core = { path = "../../wms1-core" }
-configparser = "3"
+ym38x6-core = { path = "../../ym38x6-core" }
+serde = { version = "1", features = ["derive"] }

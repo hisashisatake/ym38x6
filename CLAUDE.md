@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 このファイルはClaude Codeがym38x6リポジトリで作業する際のガイドです。
-設計の詳細は [spec.md](spec.md) を参照。
+設計の詳細は [spec.md](spec.md)（全体像）/ [spec-sound.md](spec-sound.md)（音源エンジン）/ [spec-app.md](spec-app.md)（作曲支援アプリUI）を参照。
 
 ## 設計経緯
 詳細な議論の経緯は `docs/session_history.txt` を参照。
@@ -36,7 +36,7 @@ cargo --version  # rustupでインストール済み前提
 架空FM音源「38x6」と、それを使った作曲支援アプリ（Tauri）のワークスペース。
 
 - **38x6**: YM3806(OPQ)ベース + OPZ系波形拡張の架空FM音源
-- **WMS-1**: フェーズ1で使う波形メモリ音源（38x6の1op相当、プロトタイプ）
+- **波形メモリ音源モード**: 38x6のOP1のみを鳴らす1オペレーター音色（旧WMS-1プロトタイプの後継。`ym38x6-core`の`waveform_memory_patch`が生成）
 - **作曲支援アプリ**: グリッドなし・キャリブレーションベースのジェスチャーUIで、知識がなくても良い感じのコードが弾けることを目指す
 
 ---
@@ -48,14 +48,14 @@ ym38x6/
   Cargo.toml           ← ワークスペース
   spec.md              ← 設計仕様書
   sound-core/          ← WaveTable・AdsrParams・SoundEngineトレイト（基盤ライブラリ）
-  wms1-core/           ← WMS-1エンジン実装（sound-coreに依存）
-  wms1-vst/            ← WMS-1 VST3/CLAPプラグイン（nih-plug）
+  ym38x6-core/         ← 38x6 FMエンジン実装（sound-coreに依存。波形メモリ音色も生成）
+  ym38x6-vst/          ← 38x6 VST3/CLAPプラグイン（nice-plug）
   gesture-app/         ← 作曲支援Tauriアプリ
     src-tauri/         ← Rustバックエンド（cpalで音声出力）
     src/               ← フロントエンド
 ```
 
-`sound-core` と `wms1-core` はnih-plugにもTauriにも依存しない純粋なRustライブラリ。
+`sound-core` と `ym38x6-core` はnice-plugにもTauriにも依存しない純粋なRustライブラリ。
 音源エンジンの変更はこの2クレートに閉じる。
 
 ---
@@ -69,11 +69,11 @@ ym38x6/
 cargo check --workspace --message-format=short
 
 # コアライブラリのみ
-cargo check -p sound-core -p wms1-core --message-format=short
+cargo check -p sound-core -p ym38x6-core --message-format=short
 
 # テスト
 cargo test -p sound-core
-cargo test -p wms1-core
+cargo test -p ym38x6-core
 ```
 
 ### アプリ起動（フェーズ1以降、Tauri設定後）
@@ -90,11 +90,23 @@ cd gesture-app
 npm run tauri build
 ```
 
+### VST3/CLAPバンドル（ym38x6-vst）
+
+```powershell
+# cargo-nice-plugが未インストールの場合（初回のみ）
+cargo install cargo-nice-plug
+
+# バンドル生成（target\bundled\<crate>.vst3 / .clap が生成される）
+cargo nice-plug bundle ym38x6-vst --release
+```
+
+REAPER等のDAWで動作確認する場合は `target\bundled` をVST plug-in pathsに追加してRe-scanする。
+
 ---
 
 ## アーキテクチャ
 
-### 音源レイヤー（sound-core / wms1-core）
+### 音源レイヤー（sound-core / ym38x6-core）
 
 ```
 sound-core（基盤）
@@ -103,16 +115,13 @@ sound-core（基盤）
   SoundEngineトレイト
   PerformanceLfo / PerformanceLfoTarget（共通Destination: 0=Pitch, 1=Volume）
   MasterEffects（Reverb/Chorus、SoundEngine::render()出力に後段適用）
-
-wms1-core（WMS-1実装）
-  Wms1Engine：波形オシレーター + ADSRエンベロープ + チャンネル管理（無制限）
   波形変換：32サンプルi8入力 → 1024サンプル対数フォーマット
-  PerformanceLfoTarget実装（Pitch→周波数、Volume→ADSR出力レベル）
 
-38x6エンジン（フェーズ3以降）
-  4opFM合成
-  WMS-1と同一の波形フォーマット（移行コストなし）
+ym38x6-core（38x6実装）
+  Ym38x6Engine：4opFM合成 + フィルター + 音色LFO + チャンネル管理（無制限）
   PerformanceLfoTarget実装（共通Destination + 拡張Destination=2: TLキャリア一括）
+  波形メモリ音源モード：waveform_memory_patch（Algorithm 7・OP1のみ可聴・OP2〜4はTL=0）
+    WAVEFORM_MEMORY_BANKでBank/Program経由で選択可（旧WMS-1の後継）
 ```
 
 コアは「この周波数でキーオン」「このパラメーターで発音」のAPIのみを提供する。
@@ -141,7 +150,8 @@ stream = device.build_output_stream(&config, move |output: &mut [f32], _| {
 
 ## 開発方針
 
-- `sound-core` と `wms1-core` は常にnih-plug・Tauri・cpalに無依存を保つ
-- 波形フォーマットはWMS-1/38x6で共通（1024×uint16_t対数）。変換パイプラインはコアに実装
-- パラメーターは全て0〜255（8bit）統一。周波数（オクターブ3bit + F-Number 13bit = 16bit、常にOP単位×4）のみ例外
-- `sound-core`/`wms1-core`に新機能を実装したら、同じタイミングで`wms1-vst`（該当する機能があれば将来の`ym38x6-vst`も）に配線し、VST単体でも機能が使える状態を保つ。MIDI CC/RPN/NRPNの受信処理やパラメーター追加など、VST側対応が必要な場合は実装範囲に含める
+- `sound-core` と `ym38x6-core` は常にnice-plug・Tauri・cpalに無依存を保つ
+- 波形フォーマットは1024×uint16_t対数で統一。変換パイプラインはsound-coreに実装
+- パラメーターは全て0〜255（8bit）統一。例外は周波数（オクターブ3bit + F-Number 13bit = 16bit、常にOP単位×4）とMUL（0〜15、OPM/OPN/OPQ/OPZ共通のMultiple 4bitに準拠）
+- `sound-core`/`ym38x6-core`に新機能を実装したら、同じタイミングで`ym38x6-vst`に配線し、VST単体でも機能が使える状態を保つ。MIDI CC/RPN/NRPNの受信処理やパラメーター追加など、VST側対応が必要な場合は実装範囲に含める
+- VST3/CLAPプラグインフレームワークはnice-plug（nih-plugのフォーク、https://codeberg.org/RustAudio/nice-plug ）を使用する
