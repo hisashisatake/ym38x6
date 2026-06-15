@@ -108,6 +108,6 @@ Requires: Rust (rustup), Node.js, WebView2 runtime (pre-installed on Windows 11)
 ## References
 
 - [ymfm](https://github.com/aaronsgiles/ymfm) — OPQ/OPZ/OPN reference implementation (Aaron Giles, BSD 3-Clause)
-- [PSR70-reverse](https://github.com/JKN0/PSR70-reverse) — OPQ programmer's guide and 450-entry PSR-70 preset data (Jari Kangas)
+- [PSR70-reverse](https://github.com/JKN0/PSR70-reverse) — OPQ programmer's guide and PSR-70 ROM2 voice/sound data (Jari Kangas)
 - [MDSound / fmvgen](https://github.com/kuma4649/MDSound) — YM2609 emulator (kuma4649, C#) — the original implementation of Ryu Umemoto's fictional chip concept
 - [YM2609](https://github.com/LTVA1/YM2609) — C++ port of the above (LTVA1, GPL-3.0)
