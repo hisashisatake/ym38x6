@@ -125,6 +125,9 @@ impl OpqOperator {
             am_enable: self.am_enable,
             velocity_sensitivity: 0,
             waveform: 0,
+            // 現状はデチューンを×4→DT1に載せるため、追加チューニングはオフセットなし(中心128)。
+            // OPQ広レンジデチューンの高忠実変換を実装する際にここを使う。
+            op_fine_tune: 128,
         }
     }
 }

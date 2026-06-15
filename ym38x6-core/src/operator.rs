@@ -16,9 +16,9 @@ pub enum EnvPhase {
     Idle,
 }
 
-/// オペレーター単位パラメーター一式（11個）。NRPN/DAWパラメーターから直接コピー可能。
+/// オペレーター単位パラメーター一式（12個）。NRPN/DAWパラメーターから直接コピー可能。
 /// 基本は全8bit(0〜255)だが、`mul`は0〜255統一の例外（[mapping::mul_to_ratio](crate::mapping::mul_to_ratio)参照）。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OperatorParams {
     pub tl: u8,
     pub ar: u8,
@@ -28,12 +28,45 @@ pub struct OperatorParams {
     pub rr: u8,
     /// MUL（周波数比、0〜15）。OPM/OPN/OPQ/OPZ共通のMultiple(4bit)に準拠。
     pub mul: u8,
+    /// DT1（微細デチューン、0〜255、中心128＝±0、両端±50セント）。OPM/OPN/OPQ系の慣習に合わせた微調整用。
     pub dt1: u8,
     pub ksr: u8,
     pub am_enable: bool,
     pub velocity_sensitivity: u8,
     /// 0〜255（0〜7=ビルトイン波形、8〜255=ユーザー波形スロット）
     pub waveform: u8,
+    /// OP単位の追加チューニング（0〜255、中心128＝±0、両端±1200セント＝±1オクターブ）。
+    /// DT1(±50セント)で足りない広いデチューンや、インハーモニックなOP周波数比を音色として静的に持たせる拡張。
+    /// DT1とはセントで加算される。既存`.38x6`に無い場合は中心128（オフセットなし）。
+    #[serde(default = "default_op_fine_tune")]
+    pub op_fine_tune: u8,
+}
+
+/// `op_fine_tune`の中心値（オフセットなし）。serde欠落時およびDefaultで使う。
+pub(crate) fn default_op_fine_tune() -> u8 {
+    128
+}
+
+impl Default for OperatorParams {
+    /// 既存挙動を保つため数値0・bool false（TL=0で無音）。ただし双極性の`op_fine_tune`のみ
+    /// 中心128（オフセットなし）を既定とする。
+    fn default() -> Self {
+        Self {
+            tl: 0,
+            ar: 0,
+            d1r: 0,
+            d2r: 0,
+            d1l: 0,
+            rr: 0,
+            mul: 0,
+            dt1: 0,
+            ksr: 0,
+            am_enable: false,
+            velocity_sensitivity: 0,
+            waveform: 0,
+            op_fine_tune: default_op_fine_tune(),
+        }
+    }
 }
 
 pub struct Operator {
@@ -106,7 +139,10 @@ impl Operator {
     }
 
     fn effective_frequency(&self) -> f32 {
-        let cents = dt1_to_cents(self.params.dt1) + self.tone_lfo_pitch_mod_cents + self.perf_lfo_pitch_mod_cents;
+        let cents = dt1_to_cents(self.params.dt1)
+            + op_fine_tune_to_cents(self.params.op_fine_tune)
+            + self.tone_lfo_pitch_mod_cents
+            + self.perf_lfo_pitch_mod_cents;
         self.frequency * self.f_number_ratio * mul_to_ratio(self.params.mul) * 2f32.powf(cents / 1200.0)
     }
 
@@ -186,6 +222,7 @@ mod tests {
             am_enable: false,
             velocity_sensitivity: 0,
             waveform: 0,
+            op_fine_tune: 128,
         }
     }
 
@@ -263,6 +300,27 @@ mod tests {
         op.params.dt1 = 0;
         let detuned = op.effective_frequency();
         assert!(detuned < base, "detune downward should lower frequency: {detuned} vs {base}");
+    }
+
+    #[test]
+    fn op_fine_tune_shifts_effective_frequency_about_one_octave() {
+        let mut params = fast_params();
+        params.mul = 1; // ratio = 1.0
+        params.dt1 = 128; // DT1は中立
+        params.op_fine_tune = 255; // ほぼ+1オクターブ(+1190.625セント)
+        let mut op = Operator::new(params);
+        op.note_on(440.0, 127);
+        let expected = 440.0 * 2f32.powf(1190.625 / 1200.0); // ≒ ×1.988
+        assert!(
+            (op.effective_frequency() - expected).abs() < 0.5,
+            "op_fine_tune up should raise ~1 octave: {} vs {}",
+            op.effective_frequency(),
+            expected
+        );
+
+        // 中心128ではDT1のみ作用し、追加チューニングは0
+        op.params.op_fine_tune = 128;
+        assert!((op.effective_frequency() - 440.0).abs() < 1e-3);
     }
 
     #[test]

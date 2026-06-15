@@ -164,7 +164,7 @@ G# → 79AH, A  → 80EH, A# → 889H, B  → 90AH
 
 | パラメーター | 元bit幅 | 8bit設計 | 備考 |
 |------------|--------|---------|------|
-| デチューン | 6bit（OPQ）| 0〜255、中心128 | OPQ中心値32→128にマッピング |
+| デチューン（DT1） | 6bit（OPQ）| 0〜255、中心128 | OPQ中心値32→128にマッピング。両端±50セント（微細デチューン、実機慣習に準拠）。これを超える範囲はOP Fine Tune参照 |
 | マルチプル | 4bit | 0〜15（そのまま） | 8bit統一の例外。OPM/OPN/OPQ/OPZ共通のMultiple(0=0.5倍、1〜15=整数倍)と同一表現 |
 | トータルレベル | 7bit | 0〜255 | 0=-95.25dB相当 |
 | 波形選択 | 3bit | 0〜255（実質0〜7使用） | OPZ由来の8波形 |
@@ -176,6 +176,11 @@ G# → 79AH, A  → 80EH, A# → 889H, B  → 90AH
 | KSR | 2bit | 0〜255 | 指数カーブ（1octあたり約1.09倍(0)〜2倍(255)、1段ごとに倍） |
 | AMオン/オフ | 1bit | 0 or 1（8bitで保持） | |
 | Velocity Sensitivity | なし | 0〜255（デフォルト0） | 38x6独自拡張（DX7/OPS由来）。OPQ/OPZ系チップにはハードウェア機能として存在しない |
+| OP Fine Tune | なし | 0〜255、中心128（デフォルト128） | 38x6独自拡張。中心128＝±0、両端±1オクターブ（±1200セント）。DT1（±50セント）で足りない広いデチューンや、インハーモニックなOP周波数比を音色として静的に持たせる。DT1とはセントで加算。既存`.38x6`にフィールドが無い場合は128（オフセットなし）として読む |
+
+**デチューンの2段構成（DT1 + OP Fine Tune）：**
+DT1（±50セント・微細）とOP Fine Tune（±1オクターブ・広域）はセントで加算され、`実効周波数 = ノート周波数 × MUL比 × 2^((DT1セント + OP Fine Tuneセント)/1200)` として作用する（ともにノート相対＝音程比）。
+通常はDT1のみで足り、OPQの広いデチューンやインハーモニックな倍音を再現する場合にOP Fine Tuneを併用する。OP単位F-Number上書き（NRPN、ランタイム・Note-Onでリセット）とは別系統で、こちらは音色（パッチ）として保存される。
 
 **Velocity Sensitivityの加算モデル：**
 ```
@@ -450,8 +455,8 @@ Program（0=Manual：DAWパラメーター/NRPNで手動チューニングした
 **チャンネル単位（20個）：**
 Algorithm / Feedback / パフォーマンスLFO Rate / パフォーマンスLFO Depth（ベース値）/ パフォーマンスLFO Delay / 音色LFO Freq / 音色LFO PMD / 音色LFO AMD / 音色LFO Delay / PMS / AMS / Filter Cutoff / Filter Resonance / Filter EG A / Filter EG D / Filter EG S / Filter EG R / Filter EG Depth / Reverb Send / Chorus Send
 
-**オペレーター単位（11個 × 4op = 44個）：**
-TL / AR / D1R / D2R / D1L / RR / MUL / DT1 / KS / AME / Velocity Sensitivity
+**オペレーター単位（12個 × 4op = 48個）：**
+TL / AR / D1R / D2R / D1L / RR / MUL / DT1 / KS / AME / Velocity Sensitivity / OP Fine Tune
 
 **マスター単位（5個）：**
 Reverb Time / Chorus Mod Rate / Chorus Mod Depth / Chorus Feedback / Chorus Send To Reverb

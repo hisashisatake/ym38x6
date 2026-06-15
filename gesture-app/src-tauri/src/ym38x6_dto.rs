@@ -16,6 +16,14 @@ pub struct OperatorParamsDto {
     pub am_enable: bool,
     pub velocity_sensitivity: u8,
     pub waveform: u8,
+    /// OP単位の追加チューニング（0〜255、中心128＝±0、±1オクターブ）。
+    /// 未送信のフロントエンドでも中心128（オフセットなし）として扱う。
+    #[serde(default = "default_op_fine_tune")]
+    pub op_fine_tune: u8,
+}
+
+fn default_op_fine_tune() -> u8 {
+    128
 }
 
 impl From<OperatorParamsDto> for OperatorParams {
@@ -33,6 +41,7 @@ impl From<OperatorParamsDto> for OperatorParams {
             am_enable: dto.am_enable,
             velocity_sensitivity: dto.velocity_sensitivity,
             waveform: dto.waveform,
+            op_fine_tune: dto.op_fine_tune,
         }
     }
 }

@@ -227,6 +227,8 @@ struct OperatorVstParams {
     pub ame: BoolParam,
     #[id = "vel_sens"]
     pub vel_sens: IntParam,
+    #[id = "op_fine"]
+    pub op_fine_tune: IntParam,
 }
 
 impl Default for OperatorVstParams {
@@ -246,6 +248,8 @@ impl Default for OperatorVstParams {
             ksr: IntParam::new("KSR", 64, IntRange::Linear { min: 0, max: 255 }),
             ame: BoolParam::new("AM Enable", false),
             vel_sens: IntParam::new("Velocity Sensitivity", 0, IntRange::Linear { min: 0, max: 255 }),
+            // 中心128＝オフセットなし（±1オクターブ）。DT1で足りない広いデチューン用
+            op_fine_tune: IntParam::new("Op Fine Tune", 128, IntRange::Linear { min: 0, max: 255 }),
         }
     }
 }
@@ -301,7 +305,7 @@ struct Ym38x6Params {
     #[id = "cho_send"]
     pub cho_send: IntParam,
 
-    // ---- オペレーター単位（11個 × 4op = 44個） ----
+    // ---- オペレーター単位（12個 × 4op = 48個） ----
     #[nested(array, group = "Operator")]
     pub operators: [OperatorVstParams; 4],
 
@@ -430,6 +434,7 @@ impl Ym38x6Plugin {
                 am_enable: op.ame.value(),
                 velocity_sensitivity: op.vel_sens.value() as u8,
                 waveform: self.operator_waveforms[i],
+                op_fine_tune: op.op_fine_tune.value() as u8,
             }
         });
 

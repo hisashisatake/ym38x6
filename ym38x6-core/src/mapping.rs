@@ -20,6 +20,14 @@ pub fn dt1_to_cents(dt1: u8) -> f32 {
     (dt1 as f32 - 128.0) / 128.0 * DETUNE_RANGE_CENTS
 }
 
+/// op_fine_tune値(0〜255、中心128)→セント。中心128で±0、両端で±OP_FINE_TUNE_RANGE_CENTS（±1オクターブ=1200セント）。
+/// DT1(±50セント)の範囲を超える広いデチューンや、インハーモニックなOP周波数比を音色として静的に表現するための拡張。
+/// DT1とはセントで加算される（[crate::operator]の`effective_frequency`参照）。
+pub fn op_fine_tune_to_cents(v: u8) -> f32 {
+    const OP_FINE_TUNE_RANGE_CENTS: f32 = 1200.0;
+    (v as f32 - 128.0) / 128.0 * OP_FINE_TUNE_RANGE_CENTS
+}
+
 /// TL値(0〜255)→リニアゲイン。実機OPM TL(7bit、0.75dB/step)のreg=0(0dB)〜
 /// reg=127(-95.25dB)をtl=255〜0に厳密アンカーし、dB単位で線形補間する。
 pub fn tl_to_gain(tl: u8) -> f32 {
@@ -142,6 +150,14 @@ mod tests {
         assert_eq!(dt1_to_cents(128), 0.0);
         assert_eq!(dt1_to_cents(0), -50.0);
         assert!((dt1_to_cents(255) - 49.609375).abs() < 1e-3);
+    }
+
+    #[test]
+    fn op_fine_tune_to_cents_center_and_bounds() {
+        assert_eq!(op_fine_tune_to_cents(128), 0.0);
+        assert_eq!(op_fine_tune_to_cents(0), -1200.0);
+        // (255-128)/128*1200 = 1190.625
+        assert!((op_fine_tune_to_cents(255) - 1190.625).abs() < 1e-3);
     }
 
     #[test]
